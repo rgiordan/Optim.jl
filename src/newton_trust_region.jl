@@ -9,6 +9,10 @@ using Optim.assess_convergence
 using Optim.MultivariateOptimizationResults
 
 
+function verbose_println(x...)
+  #println(x)
+end
+
 macro newton_tr_trace()
     quote
         if tracing
@@ -56,6 +60,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
     n = length(gr)
     @assert n == length(s)
     @assert (n, n) == size(H)
+    delta2 = delta ^ 2
 
     H_eig = eigfact(H)
     lambda_1 = H_eig[:values][1]
@@ -66,77 +71,100 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
       qg2[i] = _dot(H_eig[:vectors][:, i], gr) ^ 2
     end
 
-    hard_case = false
-    for i = 1:n
-      if (H_eig[:values][i] == lambda_1) &&  (qg2[i] <= 1e-10)
-         hard_case = true
-      end
-    end
-
-    @assert(!hard_case, "The hard case is not currently implemented.")
-
     # Function 4.39 in N&W
-    function p(lambda::Real)
+    function p_mag2(lambda::Real)
       p_sum = 0.
       for i = 1:n
-        p_sum = p_sum + qg2[i] / (lambda + H_eig[:values][i])
+        p_sum = p_sum + qg2[i] / ((lambda + H_eig[:values][i]) ^ 2)
       end
       p_sum
     end
 
-    interior = false
-    delta2 = delta ^ 2
-    if p(0.0) <= delta2
-        # No shrinkage is necessary, and -(H \ gr) is the solution.
-        s[:] = -(H_eig[:vectors] ./ H_eig[:values]') * H_eig[:vectors]' * gr
-        lambda = 0.0
-        interior = true
-        println("Interior")
+    if p_mag2(0.0) <= delta2
+      # No shrinkage is necessary, and -(H \ gr) is the solution.
+      s[:] = -(H_eig[:vectors] ./ H_eig[:values]') * H_eig[:vectors]' * gr
+      lambda = 0.0
+      interior = true
+      verbose_println("Interior")
     else
-      # Algorithim 4.3 of N&W, with s insted of p_l to be consistent with
-      # the rest of otpim.
+      interior = false
+      verbose_println("Boundary")
 
-      newton_diff = Inf
-      max_iters = 20
-      iter = 1
-      B = copy(H)
-
-      # Start at the absolute value of the smallest eigenvalue.
-      # TODO: is there something better?
-      lambda = abs(lambda_1)
-      for i=1:n
-        B[i, i] = H[i, i] + lambda
-      end
-      while (newton_diff > tolerance) && (iter <= max_iters)
-        R = chol(B)
-        s[:] = -R \ (R' \ gr)
-        q_l = R' \ s
-        norm2_s = norm2(s)
-        lambda_previous = copy(lambda)
-        lambda = (lambda_previous +
-                  norm2_s * (sqrt(norm2_s) - delta) / (delta * norm2(q_l)))
-        println("Newton step $(lambda) from $(lambda_previous), s=$s, delta=$delta")
-
-        # Check that lambda is not less than -lambda_1, and if so, go half the
-        # distance to -lambda_1.
-        if lambda < -lambda_1
-          lambda = 0.5 * (lambda_previous - lambda_1)
+      # The hard case is when the gradient is orthogonal to all
+      # eigenvectors associated with the lowest eigenvalue.
+      hard_case = true
+      hard_case_index = 1
+      hard_case_check_done = false
+      while !hard_case_check_done
+        # The eigenvalues are reported in order.
+        if (H_eig[:values][hard_case_index] > lambda_1)
+          hard_case_check_done = true
+        elseif qg2[hard_case_index] > 1e-16
+          hard_case_check_done = true
+          hard_case = false
         end
-        newton_diff = abs(lambda - lambda_previous)
-        iter = iter + 1
+        hard_case_index += 1
+      end
+
+      if hard_case
+        # The "hard case".  lambda is taken to be lambda_1 and we only need
+        # to find a multiple of an orthogonal eigenvector that lands the
+        # iterate on the boundary.
+
+        # Formula 4.45 in N&W
+        p_lambda2 = p_mag2(-lambda_1)
+        @assert(p_lambda2 < delta2,
+                "It is not possible to be in the hard case with ||p|| >= delta")
+        tau = sqrt(delta2 - p_lambda2)
+
+        # I don't think it matters which eigenvector we pick so take the first..
+        s[:] = -(H_eig[:vectors] ./ H_eig[:values]') * H_eig[:vectors]' * gr +
+               tau * H_eig[:vectors][1]
+      else
+        # The "easy case".
+        # Algorithim 4.3 of N&W, with s insted of p_l to be consistent with
+        # the rest of the library.
+
+        newton_diff = Inf
+        max_iters = 20
+        iter = 1
+        B = copy(H)
+
+        # Start at the absolute value of the smallest eigenvalue.
+        # TODO: is there something better?
+        lambda = abs(lambda_1)
+        lambda_previous = copy(lambda)
         for i=1:n
           B[i, i] = H[i, i] + lambda
         end
-      end
-      @assert(iter > 1, "Bad tolerance -- no iterations were computed")
-      if iter > max_iters
-        warn(string("In the trust region subproblem max_iters ($max_iters) ",
-                    "was exceeded.  Diff vs tolerance: ",
-                    "$(newton_diff) > $(tolerance)"))
-      end
-      interior = true
-    end
+        while (newton_diff > tolerance) && (iter <= max_iters)
+          R = chol(B)
+          s[:] = -R \ (R' \ gr)
+          q_l = R' \ s
+          norm2_s = norm2(s)
+          lambda_previous = lambda
+          lambda = (lambda_previous +
+                    norm2_s * (sqrt(norm2_s) - delta) / (delta * norm2(q_l)))
 
+          # Check that lambda is not less than -lambda_1, and if so, go half the
+          # distance to -lambda_1.
+          if lambda < -lambda_1
+            lambda = 0.5 * (lambda_previous - lambda_1)
+          end
+          newton_diff = abs(lambda - lambda_previous)
+          iter = iter + 1
+          for i=1:n
+            B[i, i] = H[i, i] + lambda
+          end
+        end
+        @assert(iter > 1, "Bad tolerance -- no iterations were computed")
+        if iter > max_iters
+          warn(string("In the trust region subproblem max_iters ($max_iters) ",
+                      "was exceeded.  Diff vs tolerance: ",
+                      "$(newton_diff) > $(tolerance)"))
+        end # end easy case newton's method
+      end # end easy case
+    end # Getting s
     m = zero(T)
     if interior
       m = _dot(gr, s) + 0.5 * _dot(s, H * s)
@@ -144,7 +172,8 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
       m = _dot(gr, s) + 0.5 * _dot(s, B * s)
     end
 
-    println("Got $m, $interior")
+    verbose_println("Newton got s=$s, m=$m, interior=$interior with gr=$gr,\nH=$H, ",
+            "delta^2=$delta2 and ||s||^2=$(norm2(s))")
     return m, interior
 end
 
@@ -187,6 +216,10 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
 
     # Store f(x), the function value, in f_x
     f_x_previous, f_x = NaN, d.fg!(x, gr)
+
+    # We need to store the previous gradient in case we reject a step.
+    gr_previous = copy(gr)
+
     f_calls, g_calls = f_calls + 1, g_calls + 1
 
     # Store the hessian in H
@@ -207,6 +240,7 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
     # Iterate until convergence
     converged = false
     while !converged && iteration < iterations
+        verbose_println("\n-----------------Iter $iteration")
         # Increment the number of steps we've had to perform
         iteration += 1
 
@@ -217,48 +251,61 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
         copy!(x_previous, x)
 
         # Update current position
+        verbose_println("x previous: $(x_previous)")
+        verbose_println("x before: $x")
         for i in 1:n
             @inbounds x[i] = x[i] + s[i]
         end
+        verbose_println("x after: $x")
 
         # Update the function value and gradient
+        copy!(gr_previous, gr)
         f_x_previous, f_x = f_x, d.fg!(x, gr)
         f_calls, g_calls = f_calls + 1, g_calls + 1
 
-        x_converged,
-        f_converged,
-        gr_converged,
-        converged = assess_convergence(x,
-                                       x_previous,
-                                       f_x,
-                                       f_x_previous,
-                                       gr,
-                                       xtol,
-                                       ftol,
-                                       grtol)
+        # Update the trust region size based on the discrepancy between
+        # the predicted and actual function values.  (Algorithm 4.1 in N&W)
+        # TODO: Handle m == 0 more carefully.
+        @assert(m < 0,
+                "unconverged solution failed to decrease quadratic objective, $m")
+        rho = (f_x_previous - f_x + 1e-12) / (0 - m + 1e-12)
 
-        if !converged
-          # Update the trust region size based on the discrepancy between
-          # the predicted and actual function values.  (Algorithm 4.1 in N&W)
-          @assert(m < 0,
-                  "unconverged solution failed to decrease quadratic objective")
-          rho = (f_x_previous - f_x) / m
-          if rho < 0.25
-              delta *= 0.25
-          elseif rho > 0.75 && interior
-              delta = min(2 * delta, delta_hat)
-          # else leave delta unchanged.
-          end
+        verbose_println("Got rho = $rho from $(f_x) - $(f_x_previous) ",
+                "(diff = $(f_x - f_x_previous)), and m = $m")
+        if rho < 0.25
+            delta *= 0.25
+        elseif (rho > 0.75) && interior
+            delta = min(2 * delta, delta_hat)
+        # else leave delta unchanged.
+        end
 
-          if rho > eta
-              # Update the Hessian and accept the point
-              println("Accepting improvement $(x_previous) to $x")
+        if rho > eta
+            # Update the Hessian and accept the point
+            verbose_println("Accepting improvement from $(x_previous) to $x, f=$f_x")
+            x_converged,
+            f_converged,
+            gr_converged,
+            converged = assess_convergence(x,
+                                           x_previous,
+                                           f_x,
+                                           f_x_previous,
+                                           gr,
+                                           xtol,
+                                           ftol,
+                                           grtol)
+            if !converged
+              # Don't compute the next Hessian if we've converged
               d.h!(x, H)
-          else
-              # The improvement is too small and we won't take it.
-              println("Rejecting improvement $x, reverting to $(x_previous)")
-              x, f_x = x_previous, f_x_previous
-          end
+            else
+              verbose_println("Converged.")
+            end
+        else
+            # The improvement is too small and we won't take it.
+            verbose_println("Rejecting improvement from $(x_previous) to ",
+                    "$x, f=$f_x (f_prev = $(f_x_previous))")
+            f_x = f_x_previous
+            copy!(x, x_previous)
+            copy!(gr, gr_previous)
         end
 
         @newton_tr_trace

@@ -21,11 +21,7 @@ end
 
 d = TwiceDifferentiableFunction(f, g!, h!)
 
-include("src/newton_trust_region.jl")
 results = newton_tr(d, [0.0], show_trace=true)
-
-
-
 @assert length(results.trace.states) == 0
 @assert results.gr_converged
 @assert norm(results.minimum - [5.0]) < 0.01
@@ -49,16 +45,21 @@ function h!(x::Vector, storage::Matrix)
 end
 
 d = TwiceDifferentiableFunction(f, g!, h!)
-results = Optim.newton(d, [127.0, 921.0])
+results = newton_tr(d, [127.0, 921.0], show_trace=true)
 @assert length(results.trace.states) == 0
 @assert results.gr_converged
 @assert norm(results.minimum - [0.0, 0.0]) < 0.01
 
+include("src/newton_trust_region.jl")
+
 # Test Optim.newton for all twice differentiable functions in Optim.UnconstrainedProblems.examples
 for (name, prob) in Optim.UnconstrainedProblems.examples
+#Zname = "Rosenbrock"
+#prob = Optim.UnconstrainedProblems.examples[name];
 	if prob.istwicedifferentiable
+    println("\n\n\n\n\nSolving $name")
 		ddf = TwiceDifferentiableFunction(prob.f, prob.g!,prob.h!)
-		res = Optim.newton(ddf, prob.initial_x)
+		res = newton_tr(ddf, prob.initial_x)
 		@assert norm(res.minimum - prob.solutions) < 1e-2
 	end
 end
