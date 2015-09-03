@@ -21,12 +21,16 @@ macro newton_tr_trace()
 end
 
 # Choose a point in the trust region for the next step using
-# the exact method of section 4.3 of Nocedal and Wright.
+# the interative (nearly exact) method of section 4.3 of Nocedal and Wright.
+# This is appropriate for Hessians that you factorize quickly.
+#
+# TODO: Allow the user to specify their own function for the subproblem.
 #
 # Args:
 #  gr: The gradient
 #  H:  The Hessian
 #  delta:  The trust region size, ||s|| <= delta
+#  s: Memory allocated for the step size
 #
 # Returns:
 #  m - The numeric value of the quadratic minimization.
@@ -36,6 +40,22 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
                                  H::Matrix{T},
                                  delta::T,
                                  s::Vector{T})
+    n = length(gr)
+    @assert n == length(s)
+    @assert (n, n) == size(H)
+
+    H_eig = eigfact(H)
+    lambda_1 = H_eig[:values][1]
+    hard_case = false
+    for i = 1:n
+      if (H_eig[:values][i] == lambda_1) &&
+         (abs(_dot(gr, H_eig[:vectors][:, i])) <= 1e-6)
+         hard_case = true
+      end
+    end
+
+    @assert(!hard_case, "The hard case is not currently implemented.")
+
     m = min_value
     s[:] = min_s
 
