@@ -125,13 +125,14 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 
     m = zero(T)
     if interior
-      m = _dot(g, s) + 0.5 * _dot(p, H * p)
+      m = _dot(gr, s) + 0.5 * _dot(s, H * s)
     else
-      m = _dot(g, s) + 0.5 * _dot(p, B * p)
+      m = _dot(gr, s) + 0.5 * _dot(s, B * s)
     end
 
     return m, interior
 end
+
 
 function newton_tr{T}(d::TwiceDifferentiableFunction,
                        initial_x::Vector{T};
@@ -147,7 +148,7 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
                        extended_trace::Bool = false)
 
     @assert(delta_hat > 0, "delta_hat must be strictly positive")
-    @assert(0 < initial_ < delta_hat, "delta must be in (0, delta_hat)")
+    @assert(0 < initial_delta < delta_hat, "delta must be in (0, delta_hat)")
     @assert(0 <= eta < 0.25, "eta must be in [0, 0.25)")
 
     # Maintain current state in x and previous state in x_previous
@@ -246,7 +247,7 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
         @newton_tr_trace
     end
 
-    return MultivariateOptimizationResults("Newton's Method",
+    return MultivariateOptimizationResults("Newton's Method with Trust Region",
                                            initial_x,
                                            x,
                                            @compat(Float64(f_x)),

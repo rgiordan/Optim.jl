@@ -50,6 +50,7 @@ module Optim
 
     # Newton and Quasi-Newton Methods
     include("newton.jl")
+    include("newton_trust_region.jl")
     include("bfgs.jl")
     include("l_bfgs.jl")
 
