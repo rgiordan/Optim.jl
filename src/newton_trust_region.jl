@@ -10,11 +10,11 @@ using Optim.MultivariateOptimizationResults
 
 
 function verbose_println(x...)
-  println(x...)
+  #println(x...)
 end
 
 function verbose_println(x)
-  println(x)
+  #println(x)
 end
 
 macro newton_tr_trace()
@@ -51,6 +51,7 @@ end
 #  delta:  The trust region size, ||s|| <= delta
 #  s: Memory allocated for the step size
 #  tolerance: The convergence tolerance for newton's method
+#  max_iters: The maximum number of newton iterations
 #
 # Returns:
 #  m - The numeric value of the quadratic minimization.
@@ -60,7 +61,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
                                  H::Matrix{T},
                                  delta::T,
                                  s::Vector{T};
-                                 tolerance=1e-12, verbose=false)
+                                 tolerance=1e-10, max_iters=5)
     n = length(gr)
     @assert n == length(s)
     @assert (n, n) == size(H)
@@ -130,7 +131,6 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
         # the rest of the library.
 
         newton_diff = Inf
-        max_iters = 20
         iter = 1
         B = copy(H)
 
@@ -162,7 +162,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
           end
         end
         @assert(iter > 1, "Bad tolerance -- no iterations were computed")
-        if iter > max_iters
+        if iter > (max_iters + 1)
           warn(string("In the trust region subproblem max_iters ($max_iters) ",
                       "was exceeded.  Diff vs tolerance: ",
                       "$(newton_diff) > $(tolerance)"))
