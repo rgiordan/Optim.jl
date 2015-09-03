@@ -31,6 +31,7 @@ end
 #  H:  The Hessian
 #  delta:  The trust region size, ||s|| <= delta
 #  s: Memory allocated for the step size
+#  tolerance: The convergence tolerance for newton's method
 #
 # Returns:
 #  m - The numeric value of the quadratic minimization.
@@ -39,25 +40,95 @@ end
 function solve_tr_subproblem!{T}(gr::Vector{T},
                                  H::Matrix{T},
                                  delta::T,
-                                 s::Vector{T})
+                                 s::Vector{T};
+                                 tolerance=1e-12, verbose=false)
     n = length(gr)
     @assert n == length(s)
     @assert (n, n) == size(H)
 
     H_eig = eigfact(H)
     lambda_1 = H_eig[:values][1]
+
+    # Cache the inner products between the eigenvectors and the gradient.
+    qg2 = Array(T, n)
+    for i=1:n
+      qg2[i] = _dot(H_eig[:vectors][:, i], gr) ^ 2
+    end
+
     hard_case = false
     for i = 1:n
-      if (H_eig[:values][i] == lambda_1) &&
-         (abs(_dot(gr, H_eig[:vectors][:, i])) <= 1e-6)
+      if (H_eig[:values][i] == lambda_1) &&  (qg2[i] <= 1e-10)
          hard_case = true
       end
     end
 
     @assert(!hard_case, "The hard case is not currently implemented.")
 
-    m = min_value
-    s[:] = min_s
+    # Function 4.39 in N&W
+    function p(lambda::Real)
+      p_sum = 0.
+      for i = 1:n
+        p_sum = p_sum + qg2[i] / (lambda + H_eig[:values][i])
+      end
+      p_sum
+    end
+
+    interior = false
+    delta2 = delta ^ 2
+    if p(0.0) <= delta2
+        # No shrinkage is necessary, and -(H \ gr) is the solution.
+        s[:] = -(H_eig[:vectors] ./ H_eig[:values]') * H_eig[:vectors]' * gr
+        lambda = 0.0
+        interior = true
+    else
+      # Algorithim 4.3 of N&W, with s insted of p_l to be consistent with
+      # the rest of otpim.
+
+      newton_diff = Inf
+      max_iters = 20
+      iter = 1
+      B = copy(H)
+
+      # Start at the absolute value of the smallest eigenvalue.
+      # TODO: is there something better?
+      lambda = abs(lambda_1)
+      for i=1:n
+        B[i, i] = H[i, i] + lambda
+      end
+      while (newton_diff > tolerance) && (iter <= max_iters)
+        R = chol(B)
+        s[:] = -R \ (R' \ gr)
+        q_l = R' \ s
+        norm2_s = norm2(s)
+        lambda_previous = lambda
+        lambda = (lambda_previous +
+                  norm2_s * (sqrt(norm2_s) - delta) / (delta * norm2(q_l)))
+        # Check that lambda is not less than -lambda_1, and if so, go half the
+        # distance to -lambda_1.
+        if lambda < -lambda_1
+          lambda = 0.5 * (lambda_previous - lambda_1)
+        end
+        newton_diff = abs(lambda - lambda_previous)
+        iter = iter + 1
+        for i=1:n
+          B[i, i] = H[i, i] + lambda
+        end
+      end
+      @assert(iter > 1, "Bad tolerance -- no iterations were computed")
+      if iter > max_iters
+        warn(string("In the trust region subproblem max_iters ($max_iters) ",
+                    "was exceeded.  Diff vs tolerance: ",
+                    "$(newton_diff) > $(tolerance)"))
+      end
+      interior = true
+    end
+
+    m = zero(T)
+    if interior
+      m = _dot(g, s) + 0.5 * _dot(p, H * p)
+    else
+      m = _dot(g, s) + 0.5 * _dot(p, B * p)
+    end
 
     return m, interior
 end
