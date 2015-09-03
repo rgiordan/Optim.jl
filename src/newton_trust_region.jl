@@ -1,3 +1,14 @@
+
+# TODO: remove before submitting
+using Compat
+using Optim.update!
+using Optim.OptimizationTrace
+using Optim._dot
+using Optim.norm2
+using Optim.assess_convergence
+using Optim.MultivariateOptimizationResults
+
+
 macro newton_tr_trace()
     quote
         if tracing
@@ -80,6 +91,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
         s[:] = -(H_eig[:vectors] ./ H_eig[:values]') * H_eig[:vectors]' * gr
         lambda = 0.0
         interior = true
+        println("Interior")
     else
       # Algorithim 4.3 of N&W, with s insted of p_l to be consistent with
       # the rest of otpim.
@@ -100,9 +112,11 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
         s[:] = -R \ (R' \ gr)
         q_l = R' \ s
         norm2_s = norm2(s)
-        lambda_previous = lambda
+        lambda_previous = copy(lambda)
         lambda = (lambda_previous +
                   norm2_s * (sqrt(norm2_s) - delta) / (delta * norm2(q_l)))
+        println("Newton step $(lambda) from $(lambda_previous), s=$s, delta=$delta")
+
         # Check that lambda is not less than -lambda_1, and if so, go half the
         # distance to -lambda_1.
         if lambda < -lambda_1
@@ -130,6 +144,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
       m = _dot(gr, s) + 0.5 * _dot(s, B * s)
     end
 
+    println("Got $m, $interior")
     return m, interior
 end
 
@@ -237,9 +252,11 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
 
           if rho > eta
               # Update the Hessian and accept the point
+              println("Accepting improvement $(x_previous) to $x")
               d.h!(x, H)
           else
               # The improvement is too small and we won't take it.
+              println("Rejecting improvement $x, reverting to $(x_previous)")
               x, f_x = x_previous, f_x_previous
           end
         end

@@ -1,5 +1,12 @@
 using Optim
 
+using Optim.update!
+using Optim.OptimizationTrace
+using Optim._dot
+using Optim.norm2
+using Optim.assess_convergence
+using Optim.MultivariateOptimizationResults
+
 function f(x::Vector)
     (x[1] - 5.0)^4
 end
@@ -14,7 +21,11 @@ end
 
 d = TwiceDifferentiableFunction(f, g!, h!)
 
-results = Optim.newton_tr(d, [0.0])
+include("src/newton_trust_region.jl")
+results = newton_tr(d, [0.0], show_trace=true)
+
+
+
 @assert length(results.trace.states) == 0
 @assert results.gr_converged
 @assert norm(results.minimum - [5.0]) < 0.01
