@@ -56,6 +56,7 @@ end
 # Returns:
 #  m - The numeric value of the quadratic minimization.
 #  interior - A boolean indicating whether the solution was interior
+#  lambda - The chosen regularizing quantity
 #  s, the step to take from the current x, is updated in place.
 function solve_tr_subproblem!{T}(gr::Vector{T},
                                  H::Matrix{T},
@@ -77,7 +78,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
     end
 
     # Function 4.39 in N&W
-    function p_mag2(lambda::Real)
+    function p_mag2(lambda, i_range)
       p_sum = 0.
       for i = 1:n
         p_sum = p_sum + qg2[i] / ((lambda + H_eig[:values][i]) ^ 2)
@@ -85,7 +86,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
       p_sum
     end
 
-    if p_mag2(0.0) <= delta2
+    if p_mag2(0.0, 1:10) <= delta2
       # No shrinkage is necessary, and -(H \ gr) is the solution.
       s[:] = -(H_eig[:vectors] ./ H_eig[:values]') * H_eig[:vectors]' * gr
       lambda = 0.0
@@ -117,7 +118,9 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
         # iterate on the boundary.
 
         # Formula 4.45 in N&W
-        p_lambda2 = p_mag2(-lambda_1)
+        lambda = -lambda_1
+        p_lambda2 = p_mag2(lambda)
+        println("lambda_1 = $(lambda_1), p_lambda2 = $(p_lambda2)")
         @assert(p_lambda2 < delta2,
                 "It is not possible to be in the hard case with ||p|| >= delta")
         tau = sqrt(delta2 - p_lambda2)
@@ -178,7 +181,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 
     verbose_println("Newton got m=$m, interior=$interior with ",
             "delta^2=$delta2 and ||s||^2=$(norm2(s))")
-    return m, interior
+    return m, interior, lambda
 end
 
 
@@ -266,10 +269,16 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
 
         # Update the trust region size based on the discrepancy between
         # the predicted and actual function values.  (Algorithm 4.1 in N&W)
-        # TODO: Handle m == 0 more carefully.
-        @assert(m < 0,
-                "unconverged solution failed to decrease quadratic objective, $m")
-        rho = (f_x_previous - f_x + 1e-12) / (0 - m + 1e-12)
+        f_x_diff = f_x_previous - f_x
+        if m == 0
+          # This should only happen if the step is zero, in which case
+          # we should accept the step and assess_convergence().
+          @assert(f_x_diff == 0,
+                  "m == 0 but the acutal function change ($f_x_diff) is nonzero")
+          rho = 1.0
+        else
+          rho = f_x_diff / (0 - m)
+        end
 
         verbose_println("Got rho = $rho from $(f_x) - $(f_x_previous) ",
                 "(diff = $(f_x - f_x_previous)), and m = $m")

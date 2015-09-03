@@ -1,5 +1,55 @@
 using Optim
 
+#######################################
+# First test the subproblem.
+srand(42)
+n = 5
+H = rand(n, n)
+H = H' * H + 4 * eye(n)
+H_eig = eigfact(H)
+U = H_eig[:vectors]
+
+gr = zeros(n)
+gr[1] = 1.
+s = zeros(Float64, n)
+
+true_s = -H \ gr
+s_norm2 = Optim.norm2(true_s)
+true_m = Optim._dot(true_s, gr) + 0.5 * Optim._dot(true_s, H * true_s)
+
+# An interior solution
+delta = sqrt(s_norm2) + 1.0
+m, interior, lambda = Optim.solve_tr_subproblem!(gr, H, delta, s)
+@assert interior
+@assert abs(m - true_m) < 1e-12
+@assert Optim.norm2(s - true_s) < 1e-12
+@assert abs(lambda) < 1e-12
+
+# A boundary solution
+delta = 0.5 * sqrt(s_norm2)
+m, interior, lambda = Optim.solve_tr_subproblem!(gr, H, delta, s)
+@assert !interior
+@assert m > true_m
+@assert abs(sqrt(Optim.norm2(s)) - delta) < 1e-12
+@assert lambda > 0
+
+# A "hard case" where the gradient is orthogoal to the lowest eigenvector
+gr = U[:,2][:]
+@assert abs(Optim._dot(gr, U[:,1][:])) < 1e-12
+true_s = -H \ gr
+s_norm2 = Optim.norm2(true_s)
+true_m = Optim._dot(true_s, gr) + 0.5 * Optim._dot(true_s, H * true_s)
+
+delta = 0.5 * sqrt(s_norm2)
+m, interior, lambda = solve_tr_subproblem!(gr, H, delta, s)
+@assert !interior
+@assert abs(lambda + H_eig[:values][1]) < 1e-12
+@assert abs(sqrt(Optim.norm2(s)) - delta) < 1e-12
+
+
+#######################################
+# Next, test on actual optimization problems.
+
 function f(x::Vector)
     (x[1] - 5.0)^4
 end
