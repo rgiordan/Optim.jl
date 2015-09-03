@@ -54,7 +54,7 @@ include("src/newton_trust_region.jl")
 
 # Test Optim.newton for all twice differentiable functions in Optim.UnconstrainedProblems.examples
 for (name, prob) in Optim.UnconstrainedProblems.examples
-#Zname = "Rosenbrock"
+#Zname = "Large Polynomial"
 #prob = Optim.UnconstrainedProblems.examples[name];
 	if prob.istwicedifferentiable
     println("\n\n\n\n\nSolving $name")

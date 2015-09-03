@@ -10,7 +10,11 @@ using Optim.MultivariateOptimizationResults
 
 
 function verbose_println(x...)
-  #println(x)
+  println(x...)
+end
+
+function verbose_println(x)
+  println(x)
 end
 
 macro newton_tr_trace()
@@ -172,7 +176,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
       m = _dot(gr, s) + 0.5 * _dot(s, B * s)
     end
 
-    verbose_println("Newton got s=$s, m=$m, interior=$interior with gr=$gr,\nH=$H, ",
+    verbose_println("Newton got m=$m, interior=$interior with ",
             "delta^2=$delta2 and ||s||^2=$(norm2(s))")
     return m, interior
 end
@@ -181,7 +185,7 @@ end
 function newton_tr{T}(d::TwiceDifferentiableFunction,
                        initial_x::Vector{T};
                        initial_delta::T=1.0,
-                       delta_hat::T = 10.0,
+                       delta_hat::T = 100.0,
                        eta::T = 0.1,
                        xtol::Real = 1e-32,
                        ftol::Real = 1e-8,
@@ -251,12 +255,9 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
         copy!(x_previous, x)
 
         # Update current position
-        verbose_println("x previous: $(x_previous)")
-        verbose_println("x before: $x")
         for i in 1:n
             @inbounds x[i] = x[i] + s[i]
         end
-        verbose_println("x after: $x")
 
         # Update the function value and gradient
         copy!(gr_previous, gr)
@@ -274,14 +275,14 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
                 "(diff = $(f_x - f_x_previous)), and m = $m")
         if rho < 0.25
             delta *= 0.25
-        elseif (rho > 0.75) && interior
+        elseif (rho > 0.75) && (!interior)
             delta = min(2 * delta, delta_hat)
         # else leave delta unchanged.
         end
 
         if rho > eta
             # Update the Hessian and accept the point
-            verbose_println("Accepting improvement from $(x_previous) to $x, f=$f_x")
+            verbose_println("Accepting improvement from f_prev=$(f_x_previous) f=$f_x")
             x_converged,
             f_converged,
             gr_converged,
