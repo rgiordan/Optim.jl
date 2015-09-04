@@ -34,6 +34,35 @@ m, interior, lambda = Optim.solve_tr_subproblem!(gr, H, delta, s)
 @assert lambda > 0
 
 # A "hard case" where the gradient is orthogoal to the lowest eigenvector
+
+# Test the checking
+hard_case, lambda_1_multiplicity =
+  check_hard_case([1., 2., 3.], [0., 1., 1.])
+@assert hard_case
+@assert lambda_1_multiplicity == 1
+
+hard_case, lambda_1_multiplicity =
+  check_hard_case([1., 1., 3.], [0., 0., 1.])
+@assert hard_case
+@assert lambda_1_multiplicity == 2
+
+hard_case, lambda_1_multiplicity =
+  check_hard_case([1., 1., 1.], [0., 0., 0.])
+@assert hard_case
+@assert lambda_1_multiplicity == 3
+
+hard_case, lambda_1_multiplicity =
+  check_hard_case([1., 1., 1.], [0., 0., 1.])
+@assert !hard_case
+
+hard_case, lambda_1_multiplicity =
+  check_hard_case([1., 2., 3.], [1., 1., 1.])
+@assert !hard_case
+
+
+# Now check an actual problem
+include("src/newton_trust_region.jl")
+
 gr = U[:,2][:]
 @assert abs(Optim._dot(gr, U[:,1][:])) < 1e-12
 true_s = -H \ gr

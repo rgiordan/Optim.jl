@@ -39,6 +39,40 @@ macro newton_tr_trace()
     end
 end
 
+
+# Check whether we are in the "hard case".
+#
+# Args:
+#  H_eigv: The eigenvalues of H, low to high
+#  qg2: The inner product of the eigenvalues and the gradient in the same order
+#
+# Returns:
+#  hard_case: Whether it is the hard case
+#  lambda_1_multiplicity: The number of times the lowest eigenvalue is repeated,
+#                         which is only correct if hard_case is true.
+function check_hard_case(H_eigv, qg2)
+  @assert length(H_eigv) == length(qg2)
+  hard_case = true
+  lambda_index = 1
+  hard_case_check_done = false
+  while !hard_case_check_done
+    if lambda_index > length(H_eigv)
+      hard_case_check_done = true
+    elseif abs(H_eigv[1] - H_eigv[lambda_index]) > 1e-16
+      # The eigenvalues are reported in order.
+      hard_case_check_done = true
+    else
+      if qg2[lambda_index] > 1e-16
+        hard_case_check_done = true
+        hard_case = false
+      end
+      lambda_index += 1
+    end
+  end
+
+  hard_case, lambda_index - 1
+end
+
 # Choose a point in the trust region for the next step using
 # the interative (nearly exact) method of section 4.3 of Nocedal and Wright.
 # This is appropriate for Hessians that you factorize quickly.
@@ -78,15 +112,15 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
     end
 
     # Function 4.39 in N&W
-    function p_mag2(lambda, i_range)
+    function p_mag2(lambda, min_i)
       p_sum = 0.
-      for i = 1:n
+      for i = min_i:n
         p_sum = p_sum + qg2[i] / ((lambda + H_eig[:values][i]) ^ 2)
       end
       p_sum
     end
 
-    if p_mag2(0.0, 1:10) <= delta2
+    if p_mag2(0.0, 1) <= delta2
       # No shrinkage is necessary, and -(H \ gr) is the solution.
       s[:] = -(H_eig[:vectors] ./ H_eig[:values]') * H_eig[:vectors]' * gr
       lambda = 0.0
@@ -98,19 +132,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 
       # The hard case is when the gradient is orthogonal to all
       # eigenvectors associated with the lowest eigenvalue.
-      hard_case = true
-      hard_case_index = 1
-      hard_case_check_done = false
-      while !hard_case_check_done
-        # The eigenvalues are reported in order.
-        if (H_eig[:values][hard_case_index] > lambda_1)
-          hard_case_check_done = true
-        elseif qg2[hard_case_index] > 1e-16
-          hard_case_check_done = true
-          hard_case = false
-        end
-        hard_case_index += 1
-      end
+      hard_case, lambda_1_multiplicity = check_hard_case(H_eig[:values], qg2)
 
       if hard_case
         # The "hard case".  lambda is taken to be lambda_1 and we only need
@@ -119,7 +141,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 
         # Formula 4.45 in N&W
         lambda = -lambda_1
-        p_lambda2 = p_mag2(lambda)
+        p_lambda2 = p_mag2(lambda, lambda_1_multiplicity + 1)
         println("lambda_1 = $(lambda_1), p_lambda2 = $(p_lambda2)")
         @assert(p_lambda2 < delta2,
                 "It is not possible to be in the hard case with ||p|| >= delta")
