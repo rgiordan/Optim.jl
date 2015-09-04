@@ -44,25 +44,29 @@ end
 #
 # Args:
 #  H_eigv: The eigenvalues of H, low to high
-#  qg2: The inner product of the eigenvalues and the gradient in the same order
+#  qg: The inner product of the eigenvalues and the gradient in the same order
 #
 # Returns:
-#  hard_case: Whether it is the hard case
+#  hard_case: Whether it is a candidate for the hard case
 #  lambda_1_multiplicity: The number of times the lowest eigenvalue is repeated,
 #                         which is only correct if hard_case is true.
-function check_hard_case(H_eigv, qg2)
-  @assert length(H_eigv) == length(qg2)
+function check_hard_case_candidate(H_eigv, qg)
+  @assert length(H_eigv) == length(qg)
+  if H_eigv[1] >= 0
+    # The hard case is only when the smallest eigenvalue is negative.
+    return false, 1
+  end
   hard_case = true
   lambda_index = 1
   hard_case_check_done = false
   while !hard_case_check_done
     if lambda_index > length(H_eigv)
       hard_case_check_done = true
-    elseif abs(H_eigv[1] - H_eigv[lambda_index]) > 1e-16
+    elseif abs(H_eigv[1] - H_eigv[lambda_index]) > 1e-10
       # The eigenvalues are reported in order.
       hard_case_check_done = true
     else
-      if qg2[lambda_index] > 1e-16
+      if abs(qg[lambda_index]) > 1e-10
         hard_case_check_done = true
         hard_case = false
       end
@@ -84,8 +88,8 @@ end
 #  H:  The Hessian
 #  delta:  The trust region size, ||s|| <= delta
 #  s: Memory allocated for the step size
-#  tolerance: The convergence tolerance for newton's method
-#  max_iters: The maximum number of newton iterations
+#  tolerance: The convergence tolerance for root finding
+#  max_iters: The maximum number of root finding iterations
 #
 # Returns:
 #  m - The numeric value of the quadratic minimization.
@@ -106,16 +110,16 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
     lambda_1 = H_eig[:values][1]
 
     # Cache the inner products between the eigenvectors and the gradient.
-    qg2 = Array(T, n)
+    qg = Array(T, n)
     for i=1:n
-      qg2[i] = _dot(H_eig[:vectors][:, i], gr) ^ 2
+      qg[i] = _dot(H_eig[:vectors][:, i], gr)
     end
 
     # Function 4.39 in N&W
     function p_mag2(lambda, min_i)
       p_sum = 0.
       for i = min_i:n
-        p_sum = p_sum + qg2[i] / ((lambda + H_eig[:values][i]) ^ 2)
+        p_sum = p_sum + (qg[i] ^ 2) / ((lambda + H_eig[:values][i]) ^ 2)
       end
       p_sum
     end
@@ -132,41 +136,62 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 
       # The hard case is when the gradient is orthogonal to all
       # eigenvectors associated with the lowest eigenvalue.
-      hard_case, lambda_1_multiplicity = check_hard_case(H_eig[:values], qg2)
+      hard_case_candidate, lambda_1_multiplicity =
+        check_hard_case_candidate(H_eig[:values], qg)
 
-      if hard_case
-        # The "hard case".  lambda is taken to be lambda_1 and we only need
+      # Start at the absolute value of the smallest eigenvalue.
+      # TODO: is there something better?
+      lambda = abs(lambda_1)
+
+      hard_case = false
+      if hard_case_candidate
+        # The "hard case".  lambda is taken to be -lambda_1 and we only need
         # to find a multiple of an orthogonal eigenvector that lands the
         # iterate on the boundary.
 
         # Formula 4.45 in N&W
-        lambda = -lambda_1
         p_lambda2 = p_mag2(lambda, lambda_1_multiplicity + 1)
-        println("lambda_1 = $(lambda_1), p_lambda2 = $(p_lambda2)")
-        @assert(p_lambda2 < delta2,
-                "It is not possible to be in the hard case with ||p|| >= delta")
-        tau = sqrt(delta2 - p_lambda2)
+        verbose_println("lambda_1 = $(lambda_1), p_lambda2 = $(p_lambda2), ",
+                "$delta2, $lambda_1_multiplicity")
+        if p_lambda2 > delta2
+          # Then we can simply solve using root finding.  Set a starting point.
+          hard_case = false
+          lambda = -2 * lambda_1
+        else
+          verbose_println("Hard case!")
+          hard_case = true
+          tau = sqrt(delta2 - p_lambda2)
+          verbose_println("Tau = $tau delta2 = $delta2 p_lambda2 = $(p_lambda2)")
 
-        # I don't think it matters which eigenvector we pick so take the first..
-        s[:] = -(H_eig[:vectors] ./ H_eig[:values]') * H_eig[:vectors]' * gr +
-               tau * H_eig[:vectors][1]
-      else
+          # I don't think it matters which eigenvector we pick so take the first..
+          for i=1:n
+            s[i] = tau * H_eig[:vectors][i, 1]
+            for k=(lambda_1_multiplicity + 1):n
+              s[i] = s[i] +
+                     qg[k] * H_eig[:vectors][i, k] / (H_eig[:values][k] + lambda)
+            end
+          end
+        end
+      end
+
+      if !hard_case
+        verbose_println("Easy case")
         # The "easy case".
         # Algorithim 4.3 of N&W, with s insted of p_l to be consistent with
         # the rest of the library.
 
-        newton_diff = Inf
+        root_finding_diff = Inf
         iter = 1
         B = copy(H)
 
-        # Start at the absolute value of the smallest eigenvalue.
-        # TODO: is there something better?
-        lambda = abs(lambda_1)
+        # Solutions smaller than this are not allowed.
+        min_lambda = max(-lambda_1, 0.) + 1e-6
+
         lambda_previous = copy(lambda)
         for i=1:n
           B[i, i] = H[i, i] + lambda
         end
-        while (newton_diff > tolerance) && (iter <= max_iters)
+        while (root_finding_diff > tolerance) && (iter <= max_iters)
           R = chol(B)
           s[:] = -R \ (R' \ gr)
           q_l = R' \ s
@@ -177,10 +202,10 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 
           # Check that lambda is not less than -lambda_1, and if so, go half the
           # distance to -lambda_1.
-          if lambda < -lambda_1
-            lambda = 0.5 * (lambda_previous - lambda_1)
+          if lambda < min_lambda
+            lambda = 0.5 * (lambda_previous - min_lambda)
           end
-          newton_diff = abs(lambda - lambda_previous)
+          root_finding_diff = abs(lambda - lambda_previous)
           iter = iter + 1
           for i=1:n
             B[i, i] = H[i, i] + lambda
@@ -190,18 +215,18 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
         if iter > (max_iters + 1)
           warn(string("In the trust region subproblem max_iters ($max_iters) ",
                       "was exceeded.  Diff vs tolerance: ",
-                      "$(newton_diff) > $(tolerance)"))
-        end # end easy case newton's method
+                      "$(root_finding_diff) > $(tolerance)"))
+        end # end easy case root finding
       end # end easy case
     end # Getting s
     m = zero(T)
-    if interior
+    if interior || hard_case
       m = _dot(gr, s) + 0.5 * _dot(s, H * s)
     else
       m = _dot(gr, s) + 0.5 * _dot(s, B * s)
     end
 
-    verbose_println("Newton got m=$m, interior=$interior with ",
+    verbose_println("Root finding got m=$m, interior=$interior with ",
             "delta^2=$delta2 and ||s||^2=$(norm2(s))")
     return m, interior, lambda
 end

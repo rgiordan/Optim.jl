@@ -37,32 +37,40 @@ m, interior, lambda = Optim.solve_tr_subproblem!(gr, H, delta, s)
 
 # Test the checking
 hard_case, lambda_1_multiplicity =
-  check_hard_case([1., 2., 3.], [0., 1., 1.])
+  Optim.check_hard_case_candidate([-1., 2., 3.], [0., 1., 1.])
 @assert hard_case
 @assert lambda_1_multiplicity == 1
 
 hard_case, lambda_1_multiplicity =
-  check_hard_case([1., 1., 3.], [0., 0., 1.])
+  Optim.check_hard_case_candidate([-1., -1., 3.], [0., 0., 1.])
 @assert hard_case
 @assert lambda_1_multiplicity == 2
 
 hard_case, lambda_1_multiplicity =
-  check_hard_case([1., 1., 1.], [0., 0., 0.])
+  Optim.check_hard_case_candidate([-1., -1., -1.], [0., 0., 0.])
 @assert hard_case
 @assert lambda_1_multiplicity == 3
 
 hard_case, lambda_1_multiplicity =
-  check_hard_case([1., 1., 1.], [0., 0., 1.])
+  Optim.check_hard_case_candidate([1., 2., 3.], [0., 1., 1.])
 @assert !hard_case
 
 hard_case, lambda_1_multiplicity =
-  check_hard_case([1., 2., 3.], [1., 1., 1.])
+  Optim.check_hard_case_candidate([-1., -1., -1.], [0., 0., 1.])
+@assert !hard_case
+
+hard_case, lambda_1_multiplicity =
+  Optim.check_hard_case_candidate([-1., 2., 3.], [1., 1., 1.])
 @assert !hard_case
 
 
-# Now check an actual problem
+# Now check an actual had case problem
 include("src/newton_trust_region.jl")
-
+L = zeros(Float64, n) + 0.1
+L[1] = -1.
+H = U * diagm(L) * U'
+H = 0.5 * (H' + H)
+@assert issym(H)
 gr = U[:,2][:]
 @assert abs(Optim._dot(gr, U[:,1][:])) < 1e-12
 true_s = -H \ gr
@@ -70,9 +78,10 @@ s_norm2 = Optim.norm2(true_s)
 true_m = Optim._dot(true_s, gr) + 0.5 * Optim._dot(true_s, H * true_s)
 
 delta = 0.5 * sqrt(s_norm2)
-m, interior, lambda = solve_tr_subproblem!(gr, H, delta, s)
+m, interior, lambda = Optim.solve_tr_subproblem!(gr, H, delta, s)
+Optim.norm2(s)
 @assert !interior
-@assert abs(lambda + H_eig[:values][1]) < 1e-12
+@assert abs(lambda + L[1]) < 1e-12
 @assert abs(sqrt(Optim.norm2(s)) - delta) < 1e-12
 
 
