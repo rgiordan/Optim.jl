@@ -52,7 +52,7 @@ function optimize(d::TwiceDifferentiableFunction,
     elseif method == :bfgs
         if bfgs_initial_invH == nothing
             bfgs_initial_invH = eye(length(initial_x))
-        end        
+        end
         bfgs(d,
              initial_x,
              xtol = xtol,
@@ -86,6 +86,16 @@ function optimize(d::TwiceDifferentiableFunction,
                show_trace = show_trace,
                extended_trace = extended_trace,
                linesearch! = linesearch!)
+     elseif method == :newton_tr
+         newton_tr(d,
+                   initial_x,
+                   xtol = xtol,
+                   ftol = ftol,
+                   grtol = grtol,
+                   iterations = iterations,
+                   store_trace = store_trace,
+                   show_trace = show_trace,
+                   extended_trace = extended_trace)
     else
         throw(ArgumentError("Unknown method $method"))
     end
@@ -145,7 +155,7 @@ function optimize(d::DifferentiableFunction,
     elseif method == :bfgs
         if bfgs_initial_invH == nothing
             bfgs_initial_invH = eye(length(initial_x))
-        end        
+        end
         bfgs(d,
              initial_x,
              xtol = xtol,
@@ -259,7 +269,7 @@ function optimize(f::Function,
     elseif method == :bfgs
         if bfgs_initial_invH == nothing
             bfgs_initial_invH = eye(length(initial_x))
-        end        
+        end
         d = DifferentiableFunction(f, g!)
         bfgs(d,
              initial_x,
@@ -362,7 +372,7 @@ function optimize(f::Function,
     elseif method == :bfgs
         if bfgs_initial_invH == nothing
             bfgs_initial_invH = eye(length(initial_x))
-        end        
+        end
         d = DifferentiableFunction(f, g!)
         bfgs(d,
              initial_x,
@@ -469,7 +479,7 @@ function optimize(f::Function,
     elseif method == :bfgs
         if bfgs_initial_invH == nothing
             bfgs_initial_invH = eye(length(initial_x))
-        end        
+        end
         bfgs(d,
              initial_x,
              xtol = xtol,

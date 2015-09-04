@@ -9,13 +9,6 @@ using Optim.assess_convergence
 using Optim.MultivariateOptimizationResults
 
 
-function verbose_println(x...)
-  #println(x...)
-end
-
-function verbose_println(x)
-  #println(x)
-end
 
 macro newton_tr_trace()
     quote
@@ -244,6 +237,15 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
                        store_trace::Bool = false,
                        show_trace::Bool = false,
                        extended_trace::Bool = false)
+
+   function verbose_println(x...)
+     show_trace && println(x...)
+   end
+
+   function verbose_println(x)
+     show_trace && println(x)
+   end
+
 
     @assert(delta_hat > 0, "delta_hat must be strictly positive")
     @assert(0 < initial_delta < delta_hat, "delta must be in (0, delta_hat)")
