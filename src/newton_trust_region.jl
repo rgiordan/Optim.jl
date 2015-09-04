@@ -10,6 +10,15 @@ using Optim.MultivariateOptimizationResults
 
 
 
+function verbose_println(x...)
+  #println(x...)
+end
+
+function verbose_println(x)
+  #println(x)
+end
+
+
 macro newton_tr_trace()
     quote
         if tracing
@@ -101,6 +110,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 
     H_eig = eigfact(H)
     lambda_1 = H_eig[:values][1]
+    @assert(H_eig[:values][n] > 0, "Hessian is not positive semidefinite")
 
     # Cache the inner products between the eigenvectors and the gradient.
     qg = Array(T, n)
@@ -238,15 +248,6 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
                        show_trace::Bool = false,
                        extended_trace::Bool = false)
 
-   function verbose_println(x...)
-     show_trace && println(x...)
-   end
-
-   function verbose_println(x)
-     show_trace && println(x)
-   end
-
-
     @assert(delta_hat > 0, "delta_hat must be strictly positive")
     @assert(0 < initial_delta < delta_hat, "delta must be in (0, delta_hat)")
     @assert(0 <= eta < 0.25, "eta must be in [0, 0.25)")
@@ -339,8 +340,12 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
         end
 
         if rho > eta
-            # Update the Hessian and accept the point
-            verbose_println("Accepting improvement from f_prev=$(f_x_previous) f=$f_x")
+            # Accept the point and check convergence
+            verbose_println("Accepting improvement from f_prev=$(f_x_previous) f=$(f_x)")
+            verbose_println(abs(f_x - f_x_previous) / (abs(f_x) + ftol))
+            verbose_println(ftol)
+            verbose_println(nextfloat(f_x), " ", f_x_previous)
+
             x_converged,
             f_converged,
             gr_converged,
@@ -353,7 +358,7 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
                                            ftol,
                                            grtol)
             if !converged
-              # Don't compute the next Hessian if we've converged
+              # Only compute the next Hessian if we haven't converged
               d.h!(x, H)
             else
               verbose_println("Converged.")
