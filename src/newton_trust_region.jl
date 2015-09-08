@@ -11,11 +11,11 @@ using Optim.MultivariateOptimizationResults
 
 
 function verbose_println(x...)
-  #println(x...)
+  println(x...)
 end
 
 function verbose_println(x)
-  #println(x)
+  println(x)
 end
 
 
@@ -110,7 +110,10 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 
     H_eig = eigfact(H)
     lambda_1 = H_eig[:values][1]
-    @assert(H_eig[:values][n] > 0, "Hessian is not positive semidefinite")
+    @assert(H_eig[:values][n] > 0,
+            string("Last eigenvalue is <= 0 and Hessian is not positive ",
+                   "semidefinite.  (Check that the Hessian is symmetric.)  ",
+                   "Eigenvalues: $(H_eig[:values])"))
 
     # Cache the inner products between the eigenvectors and the gradient.
     qg = Array(T, n)
@@ -144,7 +147,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 
       # Start at the absolute value of the smallest eigenvalue.
       # TODO: is there something better?
-      lambda = abs(lambda_1)
+      lambda = abs(lambda_1) + 1e-6
 
       hard_case = false
       if hard_case_candidate
