@@ -110,6 +110,8 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 
     H_eig = eigfact(H)
     lambda_1 = H_eig[:values][1]
+
+    # TODO: don't call this max_lambda to avoid confusion with min_lambda
     max_lambda = H_eig[:values][n]
     @assert(max_lambda > 0,
             string("Last eigenvalue is <= 0 and Hessian is not positive ",
@@ -147,7 +149,11 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
         check_hard_case_candidate(H_eig[:values], qg)
 
       # Solutions smaller than this are not allowed.
-      min_lambda = max(-lambda_1, 1e-12)
+      # Rather than >= 0, constrain to be at least
+      # within 1e-12 of the largest eigenvalue to guarantee that the
+      # matrix can be inverted.
+      # TODO: What is the right way to do this?
+      min_lambda = max(-lambda_1, 0.0) + max_lambda * 1e-12
       lambda = min_lambda
 
       hard_case = false
@@ -198,6 +204,10 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
           B[i, i] = H[i, i] + lambda
         end
         while (root_finding_diff > tolerance) && (iter <= max_iters)
+          verbose_println("---")
+          verbose_println("lambda=$lambda min_lambda=$(min_lambda)")
+          b_eigv = eigfact(B)[:values]
+          verbose_println("lambda_1=$(lambda_1) $(b_eigv)")
           R = chol(B)
           s[:] = -R \ (R' \ gr)
           q_l = R' \ s
@@ -206,10 +216,12 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
           lambda = (lambda_previous +
                     norm2_s * (sqrt(norm2_s) - delta) / (delta * norm2(q_l)))
 
-          # Check that lambda is not less than -lambda_1, and if so, go half the
-          # distance to -lambda_1.
+          # Check that lambda is not less than min_lambda, and if so, go half the
+          # distance to min_lambda.
           if lambda < min_lambda
-            lambda = 0.5 * (lambda_previous - min_lambda)
+            # TODO: add a unit test for this
+            lambda = 0.5 * (lambda_previous - min_lambda) + min_lambda
+            verbose_println("Step too low.  Using $(lambda) from $(lambda_previous).")
           end
           root_finding_diff = abs(lambda - lambda_previous)
           iter = iter + 1
@@ -233,7 +245,11 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
     end
 
     if !interior
-        @assert abs(delta2 - norm2(s)) < 1e-6
+        if abs(delta2 - norm2(s)) > 1e-6
+          warn("The norm of s is not close to delta: s2=$(norm2(s)) delta2=$delta2. ",
+               "This may occur when the Hessian is badly conditioned.  ",
+               "max_ev=$(max_lambda), min_ev=$(lambda_1)")
+        end
     end
     verbose_println("Root finding got m=$m, interior=$interior with ",
             "delta^2=$delta2 and ||s||^2=$(norm2(s))")
@@ -338,6 +354,8 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
 
         verbose_println("Got rho = $rho from $(f_x) - $(f_x_previous) ",
                 "(diff = $(f_x - f_x_previous)), and m = $m")
+        verbose_println("Interior = $interior, delta = $delta.")
+
         if rho < 0.25
             delta *= 0.25
         elseif (rho > 0.75) && (!interior)
@@ -348,7 +366,6 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
         if rho > eta
             # Accept the point and check convergence
             verbose_println("Accepting improvement from f_prev=$(f_x_previous) f=$(f_x).")
-            verbose_println("Interior = $interior, delta2 = $delta2.")
 
             x_converged,
             f_converged,
@@ -371,9 +388,15 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
             # The improvement is too small and we won't take it.
             verbose_println("Rejecting improvement from $(x_previous) to ",
                     "$x, f=$f_x (f_prev = $(f_x_previous))")
+
+            # If you reject an interior solution, make sure that the next
+            # delta is smaller than the current step.
+            delta = 0.25 * sqrt(norm2(x - x_previous))
+
             f_x = f_x_previous
             copy!(x, x_previous)
             copy!(gr, gr_previous)
+
         end
 
         @newton_tr_trace
