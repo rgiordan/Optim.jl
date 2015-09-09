@@ -110,7 +110,8 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 
     H_eig = eigfact(H)
     lambda_1 = H_eig[:values][1]
-    @assert(H_eig[:values][n] > 0,
+    max_lambda = H_eig[:values][n]
+    @assert(max_lambda > 0,
             string("Last eigenvalue is <= 0 and Hessian is not positive ",
                    "semidefinite.  (Check that the Hessian is symmetric.)  ",
                    "Eigenvalues: $(H_eig[:values])"))
@@ -145,9 +146,9 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
       hard_case_candidate, lambda_1_multiplicity =
         check_hard_case_candidate(H_eig[:values], qg)
 
-      # Start at the absolute value of the smallest eigenvalue.
-      # TODO: is there something better?
-      lambda = abs(lambda_1) + 1e-6
+      # Solutions smaller than this are not allowed.
+      min_lambda = max(-lambda_1, 1e-12)
+      lambda = min_lambda
 
       hard_case = false
       if hard_case_candidate
@@ -160,9 +161,11 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
         verbose_println("lambda_1 = $(lambda_1), p_lambda2 = $(p_lambda2), ",
                 "$delta2, $lambda_1_multiplicity")
         if p_lambda2 > delta2
-          # Then we can simply solve using root finding.  Set a starting point.
+          # Then we can simply solve using root finding.  Set a starting point
+          # between the minimum and largest eigenvalues.
+          # TODO: is there a better starting point?
           hard_case = false
-          lambda = -2 * lambda_1
+          lambda = min_lambda + 0.01 * (max_lambda - min_lambda)
         else
           verbose_println("Hard case!")
           hard_case = true
@@ -189,9 +192,6 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
         root_finding_diff = Inf
         iter = 1
         B = copy(H)
-
-        # Solutions smaller than this are not allowed.
-        min_lambda = max(-lambda_1, 0.) + 1e-6
 
         lambda_previous = copy(lambda)
         for i=1:n
@@ -232,6 +232,9 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
       m = _dot(gr, s) + 0.5 * _dot(s, B * s)
     end
 
+    if !interior
+        @assert abs(delta2 - norm2(s)) < 1e-6
+    end
     verbose_println("Root finding got m=$m, interior=$interior with ",
             "delta^2=$delta2 and ||s||^2=$(norm2(s))")
     return m, interior, lambda
@@ -344,10 +347,8 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
 
         if rho > eta
             # Accept the point and check convergence
-            verbose_println("Accepting improvement from f_prev=$(f_x_previous) f=$(f_x)")
-            verbose_println(abs(f_x - f_x_previous) / (abs(f_x) + ftol))
-            verbose_println(ftol)
-            verbose_println(nextfloat(f_x), " ", f_x_previous)
+            verbose_println("Accepting improvement from f_prev=$(f_x_previous) f=$(f_x).")
+            verbose_println("Interior = $interior, delta2 = $delta2.")
 
             x_converged,
             f_converged,

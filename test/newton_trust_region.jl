@@ -65,7 +65,6 @@ hard_case, lambda_1_multiplicity =
 
 
 # Now check an actual had case problem
-include("src/newton_trust_region.jl")
 L = zeros(Float64, n) + 0.1
 L[1] = -1.
 H = U * diagm(L) * U'
