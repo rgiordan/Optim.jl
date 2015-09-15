@@ -278,7 +278,7 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
     x, x_previous = copy(initial_x), copy(initial_x)
 
     # Count the total number of iterations
-    iteration = 0
+    iteration = 1
 
     # Track calls to function and gradient
     f_calls, g_calls = 0, 0
@@ -318,10 +318,8 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
 
     # Iterate until convergence
     converged = false
-    while !converged && iteration < iterations
+    while !converged && iteration <= iterations
         verbose_println("\n-----------------Iter $iteration")
-        # Increment the number of steps we've had to perform
-        iteration += 1
 
         # Find the next step direction.
         m, interior = solve_tr_subproblem!(gr, H, delta, s)
@@ -390,7 +388,9 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
                     "$x, f=$f_x (f_prev = $(f_x_previous))")
 
             # If you reject an interior solution, make sure that the next
-            # delta is smaller than the current step.
+            # delta is smaller than the current step.  Otherwise you waste
+            # steps reducing delta by constant factors while each solution
+            # will be the same.
             delta = 0.25 * sqrt(norm2(x - x_previous))
 
             f_x = f_x_previous
@@ -398,6 +398,9 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
             copy!(gr, gr_previous)
 
         end
+
+        # Increment the number of steps we've had to perform
+        iteration += 1
 
         @newton_tr_trace
     end
