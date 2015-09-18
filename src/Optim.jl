@@ -1,3 +1,5 @@
+VERSION >= v"0.4.0-dev+6521" && __precompile__(true)
+
 module Optim
     using Calculus
     using Compat
@@ -10,7 +12,9 @@ module Optim
 
     export optimize,
            DifferentiableFunction,
-           TwiceDifferentiableFunction
+           TwiceDifferentiableFunction,
+           OptimizationState,
+           OptimizationTrace
 
     # Utils
     include("utils.jl")
