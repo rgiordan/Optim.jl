@@ -11,11 +11,11 @@ using Optim.MultivariateOptimizationResults
 
 
 function verbose_println(x...)
-  println(x...)
+  #println(x...)
 end
 
 function verbose_println(x)
-  println(x)
+  #println(x)
 end
 
 
