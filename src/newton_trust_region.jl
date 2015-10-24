@@ -24,15 +24,15 @@ macro newton_tr_trace()
         if tracing
             dt = Dict()
             if extended_trace
-                dt["x"] = copy(x)
-                dt["g(x)"] = copy(gr)
-                dt["h(x)"] = copy(H)
-                dt["delta"] = copy(delta)
+                dt["x"] = copy(trs.x)
+                dt["g(x)"] = copy(trs.gr)
+                dt["h(x)"] = copy(trs.H)
+                dt["delta"] = copy(trs.delta)
             end
-            grnorm = norm(gr, Inf)
-            update!(tr,
-                    iteration,
-                    f_x,
+            grnorm = norm(trs.gr, Inf)
+            update!(trs.tr,
+                    trs.iteration,
+                    trs.f_x,
                     grnorm,
                     dt,
                     store_trace,
@@ -273,49 +273,49 @@ type NewtonTRState{T}
   f_calls::Integer
   g_calls::Integer
   tr::OptimizationTrace
+end
 
-  NetwonTRState{T}(d::TwiceDifferentiableFunction,
-                   initial_x::Vector{T};
-                   initial_delta::T=1.0) = begin
-    # Maintain current state in x and previous state in x_previous
-    x, x_previous = copy(initial_x), copy(initial_x)
+NewtonTRState{T}(d::TwiceDifferentiableFunction,
+                 initial_x::Vector{T};
+                 initial_delta::T=1.0) = begin
+  # Maintain current state in x and previous state in x_previous
+  x, x_previous = copy(initial_x), copy(initial_x)
 
-    # Count the total number of iterations
-    iteration = 1
+  # Count the total number of iterations
+  iteration = 1
 
-    # Track calls to function and gradient
-    f_calls, g_calls = 0, 0
+  # Track calls to function and gradient
+  f_calls, g_calls = 0, 0
 
-    # Count number of parameters
-    n = length(x)
+  # Count number of parameters
+  n = length(x)
 
-    # Maintain current gradient in gr
-    gr = Array(T, n)
+  # Maintain current gradient in gr
+  gr = Array(T, n)
 
-    # The current search direction
-    s = Array(T, n)
+  # The current search direction
+  s = Array(T, n)
 
-    # Store f(x), the function value, in f_x
-    f_x_previous, f_x = NaN, d.fg!(x, gr)
+  # Store f(x), the function value, in f_x
+  f_x_previous, f_x = NaN, d.fg!(x, gr)
 
-    # We need to store the previous gradient in case we reject a step.
-    gr_previous = copy(gr)
+  # We need to store the previous gradient in case we reject a step.
+  gr_previous = copy(gr)
 
-    f_calls, g_calls = f_calls + 1, g_calls + 1
+  f_calls, g_calls = f_calls + 1, g_calls + 1
 
-    # Store the hessian in H
-    H = Array(T, n, n)
-    d.h!(x, H)
+  # Store the hessian in H
+  H = Array(T, n, n)
+  d.h!(x, H)
 
-    # Keep track of trust region sizes
-    delta = copy(initial_delta)
+  # Keep track of trust region sizes
+  delta = copy(initial_delta)
 
-    # Trace the history of states visited
-    tr = OptimizationTrace()
+  # Trace the history of states visited
+  tr = OptimizationTrace()
 
-    new{T}(x, x_previous, gr, gr_previous, f_x, f_x_previous,
-           H, n, s, delta, iteration, f_calls, g_calls, tr)
-  end
+  NewtonTRState(x, x_previous, gr, gr_previous, f_x, f_x_previous,
+                H, n, s, delta, iteration, f_calls, g_calls, tr)
 end
 
 
@@ -334,6 +334,8 @@ function take_newton_tr_step!{T}(d::TwiceDifferentiableFunction,
                                  extended_trace::Bool = false)
 
   verbose_println("\n-----------------Iter $(trs.iteration)")
+
+  x_converged = f_converged = gr_converged = converged = false
 
   # Find the next step direction.
   m, interior = solve_tr_subproblem!(trs.gr, trs.H, trs.delta, trs.s)
@@ -381,7 +383,8 @@ function take_newton_tr_step!{T}(d::TwiceDifferentiableFunction,
 
   if rho > eta
      # Accept the point and check convergence
-     verbose_println("Accepting improvement from f_prev=$(f_x_previous) f=$(f_x).")
+     verbose_println("Accepting improvement from ",
+                     "f_prev=$(trs.f_x_previous) f=$(trs.f_x).")
 
      x_converged,
      f_converged,
@@ -421,7 +424,6 @@ function take_newton_tr_step!{T}(d::TwiceDifferentiableFunction,
   trs.iteration += 1
 
   # Record the step
-  tr = trs.tr
   tracing = store_trace || show_trace || extended_trace
   @newton_tr_trace
 
@@ -450,14 +452,13 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
     @assert(rho_lower < rho_upper, "must have rho_lower < rho_upper")
     @assert(rho_lower >= 0.)
 
-    trs = NewtonTRState(d, initial_x, initial_delta)
-    tr = trs.tr
+    trs = NewtonTRState(d, initial_x, initial_delta=initial_delta)
 
     tracing = store_trace || show_trace || extended_trace
     @newton_tr_trace
 
     # Iterate until convergence
-    converged = false
+    converged = x_converged = f_converged = gr_converged = false
     while !converged && trs.iteration <= iterations
       x_converged, f_converged, gr_converged, converged =
         take_newton_tr_step!(d,
