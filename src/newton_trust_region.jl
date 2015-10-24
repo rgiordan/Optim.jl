@@ -11,11 +11,11 @@
 using Compat
 
 function verbose_println(x...)
-  println(x...)
+  #println(x...)
 end
 
 function verbose_println(x)
-  println(x)
+  #println(x)
 end
 
 
@@ -258,6 +258,22 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 end
 
 
+# A type for storing the current state of the algorithm.
+#
+# Attributes:
+#  - x: The current parameter vector
+#  - x_previous: The last accepted parameter vector
+#  - gr: The current gradient
+#  - gr_previous: The last accepted gradient
+#  - f_x: The current function value
+#  - f_x_previous: The last accepted function value
+#  - H: The current Hessian
+#  - n: The length of the parameter vector
+#  - s: The previous step direction
+#  - delta: The current size of the trust region
+#  - iteration: The current iteration number
+#  - f_calls: The number of function calls
+#  - g_calls: The number of gradient calls
 type NewtonTRState{T}
   x::Vector{T}
   x_previous::Vector{T}
@@ -275,6 +291,8 @@ type NewtonTRState{T}
   tr::OptimizationTrace
 end
 
+
+# Initialize a NewtonTRState object.
 NewtonTRState{T}(d::TwiceDifferentiableFunction,
                  initial_x::Vector{T};
                  initial_delta::T=1.0) = begin
