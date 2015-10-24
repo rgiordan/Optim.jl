@@ -1,6 +1,5 @@
 # # TODO: This is intended to be used in Optim.jl.  Until that is submitted
 # # and merged, I'll include the working file in Celeste so the build passes.
-# using Compat
 # using Optim.update!
 # using Optim.OptimizationTrace
 # using Optim._dot
@@ -8,6 +7,8 @@
 # using Optim.assess_convergence
 # using Optim.MultivariateOptimizationResults
 # using Optim.TwiceDifferentiableFunction
+
+using Compat
 
 function verbose_println(x...)
   println(x...)
@@ -275,7 +276,7 @@ type NewtonTRState{T}
 
   NetwonTRState{T}(d::TwiceDifferentiableFunction,
                    initial_x::Vector{T};
-                   initial_delta::T=1.0,) = begin
+                   initial_delta::T=1.0) = begin
     # Maintain current state in x and previous state in x_previous
     x, x_previous = copy(initial_x), copy(initial_x)
 
@@ -292,7 +293,6 @@ type NewtonTRState{T}
     gr = Array(T, n)
 
     # The current search direction
-    # TODO: Try to avoid re-allocating s
     s = Array(T, n)
 
     # Store f(x), the function value, in f_x
@@ -313,9 +313,9 @@ type NewtonTRState{T}
     # Trace the history of states visited
     tr = OptimizationTrace()
 
-    new(x, x_previous, gr, gr_previous, f_x, f_x_previous,
-        H, n, s, delta, iteration, f_calls, g_calls, tr)
-    end
+    new{T}(x, x_previous, gr, gr_previous, f_x, f_x_previous,
+           H, n, s, delta, iteration, f_calls, g_calls, tr)
+  end
 end
 
 
@@ -450,7 +450,7 @@ function newton_tr{T}(d::TwiceDifferentiableFunction,
     @assert(rho_lower < rho_upper, "must have rho_lower < rho_upper")
     @assert(rho_lower >= 0.)
 
-    trs = NetwonTRState(d, initial_x, initial_delta)
+    trs = NewtonTRState(d, initial_x, initial_delta)
     tr = trs.tr
 
     tracing = store_trace || show_trace || extended_trace
