@@ -1,5 +1,5 @@
-function backtracking_linesearch!{T}(d::Union(DifferentiableFunction,
-                                              TwiceDifferentiableFunction),
+function backtracking_linesearch!{T}(d::Union{DifferentiableFunction,
+                                              TwiceDifferentiableFunction},
                                      x::Vector{T},
                                      s::Vector,
                                      x_scratch::Vector,
@@ -28,11 +28,11 @@ function backtracking_linesearch!{T}(d::Union(DifferentiableFunction,
     g_calls += 1
 
     # Store angle between search direction and gradient
-    gxp = _dot(gr_scratch, s)
+    gxp = vecdot(gr_scratch, s)
 
     # Tentatively move a distance of alpha in the direction of s
-    for i in 1:n
-        x_scratch[i] = x[i] + alpha * s[i]
+    @simd for i in 1:n
+        @inbounds x_scratch[i] = x[i] + alpha * s[i]
     end
 
     # Backtrack until we satisfy sufficient decrease condition
@@ -51,8 +51,8 @@ function backtracking_linesearch!{T}(d::Union(DifferentiableFunction,
         alpha *= rho
 
         # Update proposed position
-        for i in 1:n
-            x_scratch[i] = x[i] + alpha * s[i]
+        @simd for i in 1:n
+            @inbounds x_scratch[i] = x[i] + alpha * s[i]
         end
 
         # Evaluate f(x) at proposed position

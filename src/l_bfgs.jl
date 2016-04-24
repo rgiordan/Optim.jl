@@ -11,15 +11,15 @@ function twoloop!(s::Vector,
                   dx_history::Matrix,
                   dgr_history::Matrix,
                   m::Integer,
-                  iteration::Integer,
+                  pseudo_iteration::Integer,
                   alpha::Vector,
                   q::Vector)
     # Count number of parameters
     n = length(s)
 
     # Determine lower and upper bounds for loops
-    lower = iteration - m
-    upper = iteration - 1
+    lower = pseudo_iteration - m
+    upper = pseudo_iteration - 1
 
     # Copy gr into q for backward pass
     copy!(q, gr)
@@ -30,8 +30,8 @@ function twoloop!(s::Vector,
             continue
         end
         i = mod1(index, m)
-        @inbounds alpha[i] = rho[i] * _dot(dx_history[:, i], q)
-        for j in 1:n
+        @inbounds alpha[i] = rho[i] * vecdot(slice(dx_history, :, i), q)
+        @simd for j in 1:n
             @inbounds q[j] -= alpha[i] * dgr_history[j, i]
         end
     end
@@ -45,16 +45,14 @@ function twoloop!(s::Vector,
             continue
         end
         i = mod1(index, m)
-        @inbounds beta = rho[i] * _dot(dgr_history[:, i], s)
-        for j in 1:n
+        @inbounds beta = rho[i] * vecdot(slice(dgr_history, :, i), s)
+        @simd for j in 1:n
             @inbounds s[j] += dx_history[j, i] * (alpha[i] - beta)
         end
     end
 
     # Negate search direction
-    for i in 1:n
-        @inbounds s[i] = -1.0 * s[i]
-    end
+    scale!(s, -1)
 
     return
 end
@@ -63,7 +61,7 @@ macro lbfgstrace()
     quote
         if tracing
             dt = Dict()
-            if extended_trace
+            if o.extended_trace
                 dt["x"] = copy(x)
                 dt["g(x)"] = copy(gr)
                 dt["Current step size"] = alpha
@@ -74,34 +72,35 @@ macro lbfgstrace()
                     f_x,
                     grnorm,
                     dt,
-                    store_trace,
-                    show_trace,
-                    show_every,
-                    callback)
+                    o.store_trace,
+                    o.show_trace,
+                    o.show_every,
+                    o.callback)
         end
     end
 end
 
-function l_bfgs{T}(d::Union(DifferentiableFunction,
-                            TwiceDifferentiableFunction),
-                   initial_x::Vector{T};
-                   m::Integer = 10,
-                   xtol::Real = 1e-32,
-                   ftol::Real = 1e-8,
-                   grtol::Real = 1e-8,
-                   iterations::Integer = 1_000,
-                   store_trace::Bool = false,
-                   show_trace::Bool = false,
-                   extended_trace::Bool = false,
-                   callback = nothing,
-                   show_every = 1,
-                   linesearch!::Function = hz_linesearch!)
+immutable LBFGS <: Optimizer
+    m::Int
+    linesearch!::Function
+end
+
+LBFGS(; m::Integer = 10, linesearch!::Function = hz_linesearch!) =
+  LBFGS(Int(m), linesearch!)
+
+function optimize{T}(d::DifferentiableFunction,
+                     initial_x::Vector{T},
+                     mo::LBFGS,
+                     o::OptimizationOptions)
+    # Print header if show_trace is set
+    print_header(o)
 
     # Maintain current state in x and previous state in x_previous
     x, x_previous = copy(initial_x), copy(initial_x)
 
     # Count the total number of iterations
     iteration = 0
+    pseudo_iteration = 0
 
     # Track calls to function and gradient
     f_calls, g_calls = 0, 0
@@ -113,8 +112,8 @@ function l_bfgs{T}(d::Union(DifferentiableFunction,
     gr, gr_previous = Array(T, n), Array(T, n)
 
     # Store a history of changes in position and gradient
-    rho = Array(T, m)
-    dx_history, dgr_history = Array(T, n, m), Array(T, n, m)
+    rho = Array(T, mo.m)
+    dx_history, dgr_history = Array(T, n, mo.m), Array(T, n, mo.m)
 
     # The current search direction
     s = Array(T, n)
@@ -140,11 +139,11 @@ function l_bfgs{T}(d::Union(DifferentiableFunction,
     dx, dgr = Array(T, n), Array(T, n)
 
     # Buffers for use by twoloop!
-    twoloop_q, twoloop_alpha = Array(T, n), Array(T, m)
+    twoloop_q, twoloop_alpha = Array(T, n), Array(T, mo.m)
 
     # Trace the history of states visited
     tr = OptimizationTrace()
-    tracing = store_trace || show_trace || extended_trace || callback != nothing
+    tracing = o.store_trace || o.show_trace || o.extended_trace || o.callback != nothing
     @lbfgstrace
 
     # Assess multiple types of convergence
@@ -152,29 +151,38 @@ function l_bfgs{T}(d::Union(DifferentiableFunction,
 
     # Iterate until convergence
     converged = false
-    while !converged && iteration < iterations
+    while !converged && iteration < o.iterations
         # Increment the number of steps we've had to perform
         iteration += 1
+        pseudo_iteration += 1
 
         # Determine the L-BFGS search direction
-        twoloop!(s, gr, rho, dx_history, dgr_history, m, iteration,
+        twoloop!(s, gr, rho, dx_history, dgr_history, mo.m, pseudo_iteration,
                  twoloop_alpha, twoloop_q)
 
         # Refresh the line search cache
-        dphi0 = _dot(gr, s)
+        dphi0 = vecdot(gr, s)
+        if dphi0 > 0.0
+            pseudo_iteration = 1
+            @simd for i in 1:n
+                @inbounds s[i] = -gr[i]
+            end
+            dphi0 = vecdot(gr, s)
+        end
+
         clear!(lsr)
         push!(lsr, zero(T), f_x, dphi0)
 
         # Determine the distance of movement along the search line
         alpha, f_update, g_update =
-          linesearch!(d, x, s, x_ls, gr_ls, lsr, alpha, mayterminate)
+          mo.linesearch!(d, x, s, x_ls, gr_ls, lsr, alpha, mayterminate)
         f_calls, g_calls = f_calls + f_update, g_calls + g_update
 
         # Maintain a record of previous position
         copy!(x_previous, x)
 
         # Update current position
-        for i in 1:n
+        @simd for i in 1:n
             @inbounds dx[i] = alpha * s[i]
             @inbounds x[i] = x[i] + dx[i]
         end
@@ -183,23 +191,24 @@ function l_bfgs{T}(d::Union(DifferentiableFunction,
         copy!(gr_previous, gr)
 
         # Update the function value and gradient
-        f_x_previous, f_x = NaN, d.fg!(x, gr)
+        f_x_previous = f_x
+        f_x = d.fg!(x, gr)
         f_calls, g_calls = f_calls + 1, g_calls + 1
 
         # Measure the change in the gradient
-        for i in 1:n
+        @simd for i in 1:n
             @inbounds dgr[i] = gr[i] - gr_previous[i]
         end
 
         # Update the L-BFGS history of positions and gradients
-        rho_iteration = 1 / _dot(dx, dgr)
+        rho_iteration = 1 / vecdot(dx, dgr)
         if isinf(rho_iteration)
             # TODO: Introduce a formal error? There was a warning here previously
             break
         end
-        dx_history[:, mod1(iteration, m)] = dx
-        dgr_history[:, mod1(iteration, m)] = dgr
-        rho[mod1(iteration, m)] = rho_iteration
+        dx_history[:, mod1(pseudo_iteration, mo.m)] = dx
+        dgr_history[:, mod1(pseudo_iteration, mo.m)] = dgr
+        rho[mod1(pseudo_iteration, mo.m)] = rho_iteration
 
         x_converged,
         f_converged,
@@ -209,9 +218,9 @@ function l_bfgs{T}(d::Union(DifferentiableFunction,
                                        f_x,
                                        f_x_previous,
                                        gr,
-                                       xtol,
-                                       ftol,
-                                       grtol)
+                                       o.xtol,
+                                       o.ftol,
+                                       o.grtol)
 
         @lbfgstrace
     end
@@ -219,15 +228,15 @@ function l_bfgs{T}(d::Union(DifferentiableFunction,
     return MultivariateOptimizationResults("L-BFGS",
                                            initial_x,
                                            x,
-                                           @compat(Float64(f_x)),
+                                           Float64(f_x),
                                            iteration,
-                                           iteration == iterations,
+                                           iteration == o.iterations,
                                            x_converged,
-                                           xtol,
+                                           o.xtol,
                                            f_converged,
-                                           ftol,
+                                           o.ftol,
                                            gr_converged,
-                                           grtol,
+                                           o.grtol,
                                            tr,
                                            f_calls,
                                            g_calls)

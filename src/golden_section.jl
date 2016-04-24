@@ -20,15 +20,19 @@ macro goldensectiontrace()
     end
 end
 
-function golden_section{T <: FloatingPoint}(f::Function, x_lower::T, x_upper::T;
-                                            rel_tol::T = sqrt(eps(T)),
-                                            abs_tol::T = eps(T),
-                                            iterations::Integer = 1_000,
-                                            store_trace::Bool = false,
-                                            show_trace::Bool = false,
-                                            callback = nothing,
-                                            show_every = 1,
-                                            extended_trace::Bool = false)
+immutable GoldenSection <: Optimizer end
+
+function optimize{T <: AbstractFloat}(f::Function, x_lower::T, x_upper::T,
+                                      ::GoldenSection;
+                                      rel_tol::T = sqrt(eps(T)),
+                                      abs_tol::T = eps(T),
+                                      iterations::Integer = 1_000,
+                                      store_trace::Bool = false,
+                                      show_trace::Bool = false,
+                                      callback = nothing,
+                                      show_every = 1,
+                                      extended_trace::Bool = false,
+                                      nargs...)
     if !(x_lower < x_upper)
         error("x_lower must be less than x_upper")
     end
@@ -95,7 +99,7 @@ function golden_section{T <: FloatingPoint}(f::Function, x_lower::T, x_upper::T;
                                          initial_lower,
                                          initial_upper,
                                          x_minimum,
-                                         @compat(Float64(f_minimum)),
+                                         Float64(f_minimum),
                                          it,
                                          converged,
                                          rel_tol,

@@ -1,14 +1,6 @@
-# sse(x) gives the L2 norm of x
-sse(x) = (x'*x)[1]
-
-function levenberg_marquardt(f::Function, g::Function, x0;
-                             tolX=1e-8,
-                             tolG=1e-12,
-                             maxIter=100,
-                             lambda=100.0,
-                             show_trace=false,
-                             callback = nothing,
-                             show_every = 1)
+function levenberg_marquardt{T}(f::Function, g::Function, x0::AbstractVector{T};
+	tolX::Real = 1e-8, tolG::Real = 1e-12, maxIter::Integer = 100,
+	lambda::Real = 10.0, show_trace::Bool = false)
 	# finds argmin sum(f(x).^2) using the Levenberg-Marquardt algorithm
 	#          x
 	# The function f should take an input vector of length n and return an output vector of length m
@@ -29,32 +21,41 @@ function levenberg_marquardt(f::Function, g::Function, x0;
 	const MAX_LAMBDA = 1e16 # minimum trust region radius
 	const MIN_LAMBDA = 1e-16 # maximum trust region radius
 	const MIN_STEP_QUALITY = 1e-3
+	const GOOD_STEP_QUALITY = 0.75
 	const MIN_DIAGONAL = 1e-6 # lower bound on values of diagonal matrix used to regularize the trust region step
+
 
 	converged = false
 	x_converged = false
 	g_converged = false
 	need_jacobian = true
 	iterCt = 0
-	x = x0
+	x = copy(x0)
 	delta_x = copy(x0)
 	f_calls = 0
 	g_calls = 0
 
 	fcur = f(x)
 	f_calls += 1
-	residual = sse(fcur)
+	residual = sumabs2(fcur)
+
+	# Create buffers
+	m = length(fcur)
+	n = length(x)
+	JJ = Matrix{T}(n, n)
+	Jf_buff = Vector{T}(n)
+	x_buff = Vector{T}(n)
 
 	# Maintain a trace of the system.
 	tr = OptimizationTrace()
 	if show_trace
-		d = @compat Dict("lambda" => lambda)
-		os = OptimizationState(iterCt, sse(fcur), NaN, d)
+		d = Dict("lambda" => lambda)
+		os = OptimizationState(iterCt, sumabs2(fcur), NaN, d)
 		push!(tr, os)
 		println(os)
 	end
 
-	while ( ~converged && iterCt < maxIter )
+	while (~converged && iterCt < maxIter)
 		if need_jacobian
 			J = g(x)
 			g_calls += 1
@@ -63,14 +64,30 @@ function levenberg_marquardt(f::Function, g::Function, x0;
 		# we want to solve:
 		#    argmin 0.5*||J(x)*delta_x + f(x)||^2 + lambda*||diagm(J'*J)*delta_x||^2
 		# Solving for the minimum gives:
-		#    (J'*J + lambda*DtD) * delta_x == -J^T * f(x), where DtD = diagm(sum(J.^2,1))
-		# Where we have used the equivalence: diagm(J'*J) = diagm(sum(J.^2, 1))
+		#    (J'*J + lambda*diagm(DtD)) * delta_x == -J^T * f(x), where DtD = sumabs2(J,1)
+		# Where we have used the equivalence: diagm(J'*J) = diagm(sumabs2(J,1))
 		# It is additionally useful to bound the elements of DtD below to help
 		# prevent "parameter evaporation".
-		DtD = diagm(Float64[max(x, MIN_DIAGONAL) for x in sum(J.^2,1)])
-		delta_x = ( J'*J + sqrt(lambda)*DtD ) \ ( -J'*fcur )
+		DtD = vec(sumabs2(J, 1))
+		for i in 1:length(DtD)
+			if DtD[i] <= MIN_DIAGONAL
+				DtD[i] = MIN_DIAGONAL
+			end
+		end
+		# delta_x = ( J'*J + lambda * diagm(DtD) ) \ ( -J'*fcur )
+		At_mul_B!(JJ, J, J)
+		@simd for i in 1:n
+			@inbounds JJ[i, i] += lambda * DtD[i]
+		end
+		At_mul_B!(Jf_buff, J, fcur)
+		scale!(Jf_buff, -1)
+		delta_x = JJ \ Jf_buff
+
 		# if the linear assumption is valid, our new residual should be:
-		predicted_residual = sse(J*delta_x + fcur)
+		# predicted_residual = sumabs2(J*delta_x + fcur)
+		A_mul_B!(Jf_buff, J, delta_x)
+		LinAlg.axpy!(1, fcur, Jf_buff)
+		predicted_residual = sumabs2(Jf_buff)
 		# check for numerical problems in solving for delta_x by ensuring that the predicted residual is smaller
 		# than the current residual
 		if predicted_residual > residual + 2max(eps(predicted_residual),eps(residual))
@@ -79,18 +96,22 @@ function levenberg_marquardt(f::Function, g::Function, x0;
                              $residual (residual) + $(eps(predicted_residual)) (eps)""")
 		end
 		# try the step and compute its quality
-		trial_f = f(x + delta_x)
+		@simd for i in 1:n
+			@inbounds x_buff[i] = x[i] + delta_x[i]
+		end
+		trial_f = f(x_buff)
 		f_calls += 1
-		trial_residual = sse(trial_f)
+		trial_residual = sumabs2(trial_f)
 		# step quality = residual change / predicted residual change
 		rho = (trial_residual - residual) / (predicted_residual - residual)
-
 		if rho > MIN_STEP_QUALITY
 			x += delta_x
 			fcur = trial_f
 			residual = trial_residual
-			# increase trust region radius
-			lambda = max(0.1*lambda, MIN_LAMBDA)
+			if rho > GOOD_STEP_QUALITY
+				# increase trust region radius
+				lambda = max(0.1*lambda, MIN_LAMBDA)
+			end
 			need_jacobian = true
 		else
 			# decrease trust region radius
@@ -100,9 +121,10 @@ function levenberg_marquardt(f::Function, g::Function, x0;
 
 		# show state
 		if show_trace
-			gradnorm = norm(J'*fcur, Inf)
+			At_mul_B!(Jf_buff, J, fcur)
+			gradnorm = norm(Jf_buff, Inf)
 			d = @compat Dict("g(x)" => gradnorm, "dx" => delta_x, "lambda" => lambda)
-			os = OptimizationState(iterCt, sse(fcur), gradnorm, d)
+			os = OptimizationState(iterCt, sumabs2(fcur), gradnorm, d)
 			push!(tr, os)
 			println(os)
 		end
@@ -110,7 +132,8 @@ function levenberg_marquardt(f::Function, g::Function, x0;
 		# check convergence criteria:
 		# 1. Small gradient: norm(J^T * fcur, Inf) < tolG
 		# 2. Small step size: norm(delta_x) < tolX
-		if norm(J' * fcur, Inf) < tolG
+		At_mul_B!(Jf_buff, J, fcur)
+		if norm(Jf_buff, Inf) < tolG
 			g_converged = true
 		elseif norm(delta_x) < tolX*(tolX + norm(x))
 			x_converged = true
@@ -118,5 +141,5 @@ function levenberg_marquardt(f::Function, g::Function, x0;
 		converged = g_converged | x_converged
 	end
 
-	MultivariateOptimizationResults("Levenberg-Marquardt", x0, x, sse(fcur), iterCt, !converged, x_converged, 0.0, false, 0.0, g_converged, tolG, tr, f_calls, g_calls)
+	MultivariateOptimizationResults("Levenberg-Marquardt", x0, x, sumabs2(fcur), iterCt, !converged, x_converged, 0.0, false, 0.0, g_converged, tolG, tr, f_calls, g_calls)
 end

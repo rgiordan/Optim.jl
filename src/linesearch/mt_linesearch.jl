@@ -132,8 +132,8 @@
 # TODO: Decide whether to update x, f, g and info
 #       or just return step and nfev and let existing code do its job
 
-function mt_linesearch!{T}(fcn::Union(DifferentiableFunction,
-                                      TwiceDifferentiableFunction),
+function mt_linesearch!{T}(fcn::Union{DifferentiableFunction,
+                                      TwiceDifferentiableFunction},
                          x::Vector,
                          s::Vector,
                          new_x::Vector,
@@ -175,7 +175,7 @@ function mt_linesearch!{T}(fcn::Union(DifferentiableFunction,
    # and check that s is a descent direction.
    #
 
-   dginit = _dot(g, s)
+   dginit = vecdot(g, s)
    if dginit >= 0.0
       throw(ArgumentError("Search direction is not a direction of descent"))
    end
@@ -256,7 +256,7 @@ function mt_linesearch!{T}(fcn::Union(DifferentiableFunction,
       f_calls += 1
       g_calls += 1
       nfev += 1 # This includes calls to f() and g!()
-      dg = _dot(g, s)
+      dg = vecdot(g, s)
       ftest1 = finit + stp * dgtest
 
       #

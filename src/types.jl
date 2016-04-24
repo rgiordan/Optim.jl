@@ -1,3 +1,45 @@
+abstract Optimizer
+
+immutable OptimizationOptions{TCallback <: Union{Void, Function}}
+    xtol::Float64
+    ftol::Float64
+    grtol::Float64
+    iterations::Int
+    store_trace::Bool
+    show_trace::Bool
+    extended_trace::Bool
+    autodiff::Bool
+    show_every::Int
+    callback::TCallback
+end
+
+function OptimizationOptions(;
+        xtol::Real = 1e-32,
+        ftol::Real = 1e-8,
+        grtol::Real = 1e-8,
+        iterations::Integer = 1_000,
+        store_trace::Bool = false,
+        show_trace::Bool = false,
+        extended_trace::Bool = false,
+        autodiff::Bool = false,
+        show_every::Integer = 1,
+        callback = nothing)
+    show_every = show_every > 0 ? show_every: 1
+    if extended_trace && callback == nothing
+        show_trace = true
+    end
+    OptimizationOptions{typeof(callback)}(
+        Float64(xtol), Float64(ftol), Float64(grtol), Int(iterations),
+        store_trace, show_trace, extended_trace, autodiff, Int(show_every),
+        callback)
+end
+
+function print_header(options::OptimizationOptions)
+    if options.show_trace
+        @printf "Iter     Function value   Gradient norm \n"
+    end
+end
+
 immutable OptimizationState
     iteration::Int
     value::Float64
@@ -6,11 +48,11 @@ immutable OptimizationState
 end
 
 function OptimizationState(i::Integer, f::Real)
-    OptimizationState(int(i), @compat(Float64(f)), NaN, Dict())
+    OptimizationState(int(i), Float64(f), NaN, Dict())
 end
 
 function OptimizationState(i::Integer, f::Real, g::Real)
-    OptimizationState(int(i), @compat(Float64(f)), @compat(Float64(g)), Dict())
+    OptimizationState(int(i), Float64(f), Float64(g), Dict())
 end
 
 immutable OptimizationTrace
@@ -102,8 +144,16 @@ end
 function Base.show(io::IO, r::MultivariateOptimizationResults)
     @printf io "Results of Optimization Algorithm\n"
     @printf io " * Algorithm: %s\n" r.method
-    @printf io " * Starting Point: [%s]\n" join(r.initial_x, ",")
-    @printf io " * Minimum: [%s]\n" join(r.minimum, ",")
+    if length(join(r.initial_x, ",")) < 40
+        @printf io " * Starting Point: [%s]\n" join(r.initial_x, ",")
+    else
+        @printf io " * Starting Point: [%s, ...]\n" join(r.initial_x[1:2], ",")
+    end
+    if length(join(r.minimum, ",")) < 40
+        @printf io " * Minimum: [%s]\n" join(r.minimum, ",")
+    else
+        @printf io " * Minimum: [%s, ...]\n" join(r.minimum[1:2], ",")
+    end
     @printf io " * Value of Function at Minimum: %f\n" r.f_minimum
     @printf io " * Iterations: %d\n" r.iterations
     @printf io " * Convergence: %s\n" converged(r)
