@@ -2,7 +2,9 @@ VERSION >= v"0.4.0-dev+6521" && __precompile__(true)
 
 module Optim
     using Calculus
+    using PositiveFactorizations
     using Compat
+    import Compat.String
 
     import Base.length,
            Base.push!,
@@ -33,6 +35,9 @@ module Optim
     # Types
     include("types.jl")
 
+    # API
+    include("api.jl")
+
     # Automatic differentiation utilities
     include("autodiff.jl")
 
@@ -54,6 +59,9 @@ module Optim
     include(joinpath("linesearch", "mt_cstep.jl"))
     include(joinpath("linesearch", "mt_linesearch.jl"))
     include(joinpath("linesearch", "hz_linesearch.jl"))
+
+    # preconditioning functionality
+    include("precon.jl")
 
     # Gradient Descent
     include("gradient_descent.jl")
@@ -82,6 +90,20 @@ module Optim
     # Univariate methods
     include("golden_section.jl")
     include("brent.jl")
+
+    const methods = Dict{Symbol, Type}(
+        :gradient_descent => GradientDescent,
+        :momentum_gradient_descent => MomentumGradientDescent,
+        :cg => ConjugateGradient,
+        :bfgs => BFGS,
+        :l_bfgs => LBFGS,
+        :newton => Newton,
+        :nelder_mead => NelderMead,
+        :simulated_annealing => SimulatedAnnealing,
+        :brent => Brent,
+        :golden_section => GoldenSection,
+        :accelerated_gradient_descent => AcceleratedGradientDescent,
+        :fminbox => Fminbox)
 
     # Backward compatibility
     include("deprecate.jl")

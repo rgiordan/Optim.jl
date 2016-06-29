@@ -7,7 +7,7 @@ macro newtontrace()
                 dt["g(x)"] = copy(gr)
                 dt["h(x)"] = copy(H)
             end
-            grnorm = norm(gr, Inf)
+            grnorm = vecnorm(gr, Inf)
             update!(tr,
                     iteration,
                     f_x,
@@ -62,7 +62,7 @@ function optimize{T}(d::TwiceDifferentiableFunction,
     s = Array(T, n)
 
     # Buffers for use in line search
-    x_ls, gr_ls = Array(T, n), Array(T, n)
+    x_ls, g_ls = Array(T, n), Array(T, n)
 
     # Store f(x) in f_x
     f_x_previous, f_x = NaN, d.fg!(x, gr)
@@ -82,12 +82,12 @@ function optimize{T}(d::TwiceDifferentiableFunction,
     lsr = LineSearchResults(T)
 
     # Trace the history of states visited
-    tr = OptimizationTrace()
+    tr = OptimizationTrace(mo)
     tracing = o.store_trace || o.show_trace || o.extended_trace || o.callback != nothing
     @newtontrace
 
     # Assess multiple types of convergence
-    x_converged, f_converged, gr_converged = false, false, false
+    x_converged, f_converged, g_converged = false, false, false
 
     # Iterate until convergence
     converged = false
@@ -95,9 +95,13 @@ function optimize{T}(d::TwiceDifferentiableFunction,
         # Increment the number of steps we've had to perform
         iteration += 1
 
-        # Search direction is always the negative gradient divided by H
-        # TODO: Do this calculation in place
-        @inbounds s[:] = -(H \ gr)
+        # Search direction is always the negative gradient divided by
+        # a matrix encoding the absolute values of the curvatures
+        # represented by H. It deviates from the usual "add a scaled
+        # identity matrix" version of the modified Newton method. More
+        # information can be found in the discussion at issue #153.
+        F, Hd = ldltfact!(Positive, H)
+        s[:] = -(F\gr)
 
         # Refresh the line search cache
         dphi0 = vecdot(gr, s)
@@ -106,7 +110,7 @@ function optimize{T}(d::TwiceDifferentiableFunction,
 
         # Determine the distance of movement along the search line
         alpha, f_update, g_update =
-          mo.linesearch!(d, x, s, x_ls, gr_ls, lsr, alpha, mayterminate)
+          mo.linesearch!(d, x, s, x_ls, g_ls, lsr, alpha, mayterminate)
         f_calls, g_calls = f_calls + f_update, g_calls + g_update
 
         # Maintain a record of previous position
@@ -124,15 +128,15 @@ function optimize{T}(d::TwiceDifferentiableFunction,
 
         x_converged,
         f_converged,
-        gr_converged,
+        g_converged,
         converged = assess_convergence(x,
                                        x_previous,
                                        f_x,
                                        f_x_previous,
                                        gr,
-                                       o.xtol,
-                                       o.ftol,
-                                       o.grtol)
+                                       o.x_tol,
+                                       o.f_tol,
+                                       o.g_tol)
 
         @newtontrace
     end
@@ -144,11 +148,11 @@ function optimize{T}(d::TwiceDifferentiableFunction,
                                            iteration,
                                            iteration == o.iterations,
                                            x_converged,
-                                           o.xtol,
+                                           o.x_tol,
                                            f_converged,
-                                           o.ftol,
-                                           gr_converged,
-                                           o.grtol,
+                                           o.f_tol,
+                                           g_converged,
+                                           o.g_tol,
                                            tr,
                                            f_calls,
                                            g_calls)

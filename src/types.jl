@@ -1,9 +1,8 @@
 abstract Optimizer
-
 immutable OptimizationOptions{TCallback <: Union{Void, Function}}
-    xtol::Float64
-    ftol::Float64
-    grtol::Float64
+    x_tol::Float64
+    f_tol::Float64
+    g_tol::Float64
     iterations::Int
     store_trace::Bool
     show_trace::Bool
@@ -14,9 +13,9 @@ immutable OptimizationOptions{TCallback <: Union{Void, Function}}
 end
 
 function OptimizationOptions(;
-        xtol::Real = 1e-32,
-        ftol::Real = 1e-8,
-        grtol::Real = 1e-8,
+        x_tol::Real = 1e-32,
+        f_tol::Real = 1e-32,
+        g_tol::Real = 1e-8,
         iterations::Integer = 1_000,
         store_trace::Bool = false,
         show_trace::Bool = false,
@@ -29,7 +28,7 @@ function OptimizationOptions(;
         show_trace = true
     end
     OptimizationOptions{typeof(callback)}(
-        Float64(xtol), Float64(ftol), Float64(grtol), Int(iterations),
+        Float64(x_tol), Float64(f_tol), Float64(g_tol), Int(iterations),
         store_trace, show_trace, extended_trace, autodiff, Int(show_every),
         callback)
 end
@@ -40,54 +39,47 @@ function print_header(options::OptimizationOptions)
     end
 end
 
-immutable OptimizationState
+immutable OptimizationState{T <: Optimizer}
     iteration::Int
     value::Float64
-    gradnorm::Float64
+    g_norm::Float64
     metadata::Dict
 end
 
-function OptimizationState(i::Integer, f::Real)
-    OptimizationState(int(i), Float64(f), NaN, Dict())
+immutable OptimizationTrace{T<:Optimizer}
+    states::Vector{OptimizationState{T}}
 end
 
-function OptimizationState(i::Integer, f::Real, g::Real)
-    OptimizationState(int(i), Float64(f), Float64(g), Dict())
-end
-
-immutable OptimizationTrace
-    states::Vector{OptimizationState}
-end
-
-OptimizationTrace() = OptimizationTrace(Array(OptimizationState, 0))
+OptimizationTrace{T}(m::T) = OptimizationTrace(Array{OptimizationState{T}}(0))
 
 abstract OptimizationResults
 
 type MultivariateOptimizationResults{T,N} <: OptimizationResults
-    method::ASCIIString
+    method::String
     initial_x::Array{T,N}
     minimum::Array{T,N}
     f_minimum::Float64
     iterations::Int
     iteration_converged::Bool
     x_converged::Bool
-    xtol::Float64
+    x_tol::Float64
     f_converged::Bool
-    ftol::Float64
-    gr_converged::Bool
-    grtol::Float64
+    f_tol::Float64
+    g_converged::Bool
+    g_tol::Float64
     trace::OptimizationTrace
     f_calls::Int
     g_calls::Int
 end
 
 type UnivariateOptimizationResults{T} <: OptimizationResults
-    method::ASCIIString
+    method::String
     initial_lower::T
     initial_upper::T
     minimum::T
     f_minimum::Float64
     iterations::Int
+    iteration_converged::Bool
     converged::Bool
     rel_tol::Float64
     abs_tol::Float64
@@ -109,7 +101,7 @@ immutable TwiceDifferentiableFunction
 end
 
 function Base.show(io::IO, t::OptimizationState)
-    @printf io "%6d   %14e   %14e\n" t.iteration t.value t.gradnorm
+    @printf io "%6d   %14e   %14e\n" t.iteration t.value t.g_norm
     if !isempty(t.metadata)
         for (key, value) in t.metadata
             @printf io " * %s: %s\n" key value
@@ -137,62 +129,60 @@ function Base.show(io::IO, t::OptimizationTrace)
     return
 end
 
-function converged(r::MultivariateOptimizationResults)
-    return r.x_converged || r.f_converged || r.gr_converged
-end
-
 function Base.show(io::IO, r::MultivariateOptimizationResults)
     @printf io "Results of Optimization Algorithm\n"
-    @printf io " * Algorithm: %s\n" r.method
-    if length(join(r.initial_x, ",")) < 40
-        @printf io " * Starting Point: [%s]\n" join(r.initial_x, ",")
+    @printf io " * Algorithm: %s\n" method(r)
+    if length(join(initial_state(r), ",")) < 40
+        @printf io " * Starting Point: [%s]\n" join(initial_state(r), ",")
     else
-        @printf io " * Starting Point: [%s, ...]\n" join(r.initial_x[1:2], ",")
+        @printf io " * Starting Point: [%s, ...]\n" join(initial_state(r)[1:2], ",")
     end
-    if length(join(r.minimum, ",")) < 40
-        @printf io " * Minimum: [%s]\n" join(r.minimum, ",")
+    if length(join(minimizer(r), ",")) < 40
+        @printf io " * Minimizer: [%s]\n" join(minimizer(r), ",")
     else
-        @printf io " * Minimum: [%s, ...]\n" join(r.minimum[1:2], ",")
+        @printf io " * Minimizer: [%s, ...]\n" join(minimizer(r)[1:2], ",")
     end
-    @printf io " * Value of Function at Minimum: %f\n" r.f_minimum
-    @printf io " * Iterations: %d\n" r.iterations
+    @printf io " * Minimum: %e\n" minimum(r)
+    @printf io " * Iterations: %d\n" iterations(r)
     @printf io " * Convergence: %s\n" converged(r)
-    @printf io "   * |x - x'| < %.1e: %s\n" r.xtol r.x_converged
-    @printf io "   * |f(x) - f(x')| / |f(x)| < %.1e: %s\n" r.ftol r.f_converged
-    @printf io "   * |g(x)| < %.1e: %s\n" r.grtol r.gr_converged
-    @printf io "   * Exceeded Maximum Number of Iterations: %s\n" r.iteration_converged
-    @printf io " * Objective Function Calls: %d\n" r.f_calls
-    @printf io " * Gradient Call: %d" r.g_calls
+    if r.method == "Nelder-Mead"
+        @printf io "   *  √(Σ(yᵢ-ȳ)²)/n < %.1e: %s\n" g_tol(r) g_converged(r)
+    else
+        @printf io "   * |x - x'| < %.1e: %s\n" x_tol(r) x_converged(r)
+        @printf io "   * |f(x) - f(x')| / |f(x)| < %.1e: %s\n" f_tol(r) f_converged(r)
+        @printf io "   * |g(x)| < %.1e: %s\n" g_tol(r) g_converged(r)
+    end
+    @printf io "   * Reached Maximum Number of Iterations: %s\n" iteration_limit_reached(r)
+    @printf io " * Objective Function Calls: %d\n" f_calls(r)
+    if !(r.method in ("Nelder-Mead", "Simulated Annealing"))
+        @printf io " * Gradient Calls: %d" g_calls(r)
+    end
     return
-end
-
-function converged(r::UnivariateOptimizationResults)
-    return r.converged
 end
 
 function Base.show(io::IO, r::UnivariateOptimizationResults)
     @printf io "Results of Optimization Algorithm\n"
-    @printf io " * Algorithm: %s\n" r.method
-    @printf io " * Search Interval: [%f, %f]\n" r.initial_lower r.initial_upper
-    @printf io " * Minimum: %f\n" r.minimum
-    @printf io " * Value of Function at Minimum: %f\n" r.f_minimum
-    @printf io " * Iterations: %d\n" r.iterations
-    @printf io " * Convergence: max(|x - x_upper|, |x - x_lower|) <= 2*(%.1e*|x|+%.1e): %s\n" r.rel_tol r.abs_tol r.converged
-    @printf io " * Objective Function Calls: %d" r.f_calls
+    @printf io " * Algorithm: %s\n" method(r)
+    @printf io " * Search Interval: [%f, %f]\n" lower_bound(r) upper_bound(r)
+    @printf io " * Minimizer: %e\n" minimizer(r)
+    @printf io " * Minimum: %e\n" minimum(r)
+    @printf io " * Iterations: %d\n" iterations(r)
+    @printf io " * Convergence: max(|x - x_upper|, |x - x_lower|) <= 2*(%.1e*|x|+%.1e): %s\n" rel_tol(r) abs_tol(r) converged(r)
+    @printf io " * Objective Function Calls: %d" f_calls(r)
     return
 end
 
 function Base.append!(a::MultivariateOptimizationResults, b::MultivariateOptimizationResults)
-    a.iterations += b.iterations
-    a.minimum = b.minimum
-    a.f_minimum = b.f_minimum
-    a.iteration_converged = b.iteration_converged
-    a.x_converged = b.x_converged
-    a.f_converged = b.f_converged
-    a.gr_converged = b.gr_converged
-    append!(a.trace, b.trace)
-    a.f_calls += b.f_calls
-    a.g_calls += b.g_calls
+    a.iterations += iterations(b)
+    a.minimum = minimizer(b)
+    a.f_minimum = minimum(b)
+    a.iteration_converged = iteration_limit_reached(b)
+    a.x_converged = x_converged(b)
+    a.f_converged = f_converged(b)
+    a.g_converged = g_converged(b)
+    append!(a.trace.states, b.trace.states)
+    a.f_calls += f_calls(b)
+    a.g_calls += g_calls(b)
 end
 
 # TODO: Expose ability to do forward and backward differencing

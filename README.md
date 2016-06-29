@@ -1,5 +1,13 @@
+
+[![](https://img.shields.io/badge/docs-latest-blue.svg)](https://juliaopt.github.io/Optim.jl/latest)
+
+*This it the development branch of Optim.jl. Please visit [this branch](https://github.com/JuliaOpt/Optim.jl/tree/v0.4.5) to find the README.md belonging to the latest official release of Optim.jl*
+
+
 Optim.jl
 ========
+
+[![Join the chat at https://gitter.im/JuliaOpt/Optim.jl](https://badges.gitter.im/JuliaOpt/Optim.jl.svg)](https://gitter.im/JuliaOpt/Optim.jl?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 [![Optim](http://pkg.julialang.org/badges/Optim_0.3.svg)](http://pkg.julialang.org/?pkg=Optim&ver=0.3)
 [![Optim](http://pkg.julialang.org/badges/Optim_0.4.svg)](http://pkg.julialang.org/?pkg=Optim&ver=0.4)
@@ -115,6 +123,51 @@ We can then optimize the `sqerror` function just like any other function:
 res = optimize(sqerror, [0.0, 0.0], LBFGS())
 ```
 
+# API for accessing results
+
+After we have our results in `res`, we can use the API for getting optimization results. This consists of a collection of functions. They are not exported, so they have to be prefixed by `Optim.`. Say we have optimized the `sqerror` function above. If we can't remember what method we used, we simply use
+```jl
+Optim.method(res)
+```
+which will return `"L-BFGS"`. A bit more useful information is the minimizer and minimum of the objective functions, which can be found using
+```jl
+Optim.minimizer(res)
+# returns [0.766667, 2.1]     
+
+Optim.minimum(res)
+# returns 0.16666666666666652
+```
+
+A complete list of functions can be found below.
+
+Defined for all methods:
+* `method(res)`
+* `minimizer(res)`
+* `minimum(res)`
+* `iterations(res)`
+* `iteration_limit_reached(res)`
+* `trace(res)`
+* `x_trace(res)`
+* `f_trace(res)`
+* `f_calls(res)`
+* `converged(res)`
+
+Defined for univariate optimization:
+* `lower_bound(res)`
+* `upper_bound(res)`
+* `x_lower_trace(res)`
+* `x_upper_trace(res)`
+* `rel_tol(res)`
+* `abs_tol(res)`
+
+Defined for multivariate optimization:
+* `g_norm_trace(res)`
+* `g_calls(res)`
+* `x_converged(res)`
+* `f_converged(res)`
+* `g_converged(res)`
+* `initial_state(res)`
+
 # Configurable Options
 
 The section above described the basic API for the Optim package, although it is on the roadmap to update this soon. We employed several different optimization algorithms using the `method` keyword, which can take on any of the following values:
@@ -143,9 +196,9 @@ Special methods for univariate optimization:
 
 In addition to the `method` keyword, you can alter the behavior of the Optim package by using the following keywords:
 
-* `xtol`: What is the threshold for determining convergence? Defaults to `1e-32`.
-* `ftol`: What is the threshold for determining convergence? Defaults to `1e-32`.
-* `grtol`: What is the threshold for determining convergence? Defaults to `1e-8`.
+* `x_tol`: What is the threshold for determining convergence? Defaults to `1e-32`.
+* `f_tol`: What is the threshold for determining convergence? Defaults to `1e-32`.
+* `g_tol`: What is the threshold for determining convergence? Defaults to `1e-8`.
 * `iterations`: How many iterations will run before the algorithm gives up? Defaults to `1_000`.
 * `store_trace`: Should a trace of the optimization algorithm's state be stored? Defaults to `false`.
 * `show_trace`: Should a trace of the optimization algorithm's state be shown on `STDOUT`? Defaults to `false`.
@@ -159,7 +212,7 @@ Thus, one might construct a complex call to `optimize` like:
 res = optimize(f, g!,
                [0.0, 0.0],
                method = GradientDescent(),
-               grtol = 1e-12,
+               g_tol = 1e-12,
                iterations = 10,
                store_trace = true,
                show_trace = false)
@@ -171,7 +224,7 @@ Notice the need to specify the method using a keyword if this syntax is used. It
 res = optimize(f, g!,
                [0.0, 0.0],
                GradientDescent(),
-               OptimizationOptions(grtol = 1e-12,
+               OptimizationOptions(g_tol = 1e-12,
                                    iterations = 10,
                                    store_trace = true,
                                    show_trace = false))
@@ -278,10 +331,20 @@ x0 = [2.0, 2.0]
 results = optimize(d4, x0, l, u, Fminbox())  # d4 from rosenbrock example
 ```
 
-This performs optimization with a barrier penalty, successively scaling down the barrier coefficient and using `cg` for convergence at each step.
+This performs optimization with a barrier penalty, successively scaling down the barrier coefficient and using the chosen `optimizer` for convergence at each step. Notice that the `Optimizer` type, not an instance should be passed. This means that the keyword should be passed as `optimizer = GradientDescent` not `optimizer = GradientDescent()`, as you usually would.
 
-This algorithm uses diagonal preconditioning to improve the accuracy, and hence is a good example of how to use `cg` with preconditioning. Only the box constraints are used. If you can analytically compute the diagonal of the Hessian of your objective function, you may want to consider writing your own preconditioner (see `nnls` for an example).
+This algorithm uses diagonal preconditioning to improve the accuracy, and hence is a good example of how to use `ConjugateGradient` or `LBFGS` with preconditioning. Other methods will currently not use preconditioning. Only the box constraints are used. If you can analytically compute the diagonal of the Hessian of your objective function, you may want to consider writing your own preconditioner.
 
+There are two iterations parameters: an outer iterations parameter used to control `Fminbox` and an inner iterations parameter used to control the inner optimizer. For this reason, the options syntax is a bit different from the rest of the package. All parameters regarding the outer iterations are passed as keyword arguments, and options for the interior optimizer is passed as an `OptimizationOptions` type using the keyword `optimizer_o`.
+
+For example, the following restricts the optimization to 2 major iterations
+```julia
+results = optimize(objective, x0, l, u, Fminbox(); iterations = 2)
+```
+In contrast, the following sets the maximum number of iterations for each `ConjugateGradient` optimization to 2
+```julia
+results = Optim.optimize(objective, x0, l, u, Fminbox(); optimizer_o = OptimizationOptions(iterations = 2))
+```
 ### Linear programming
 
 For linear programming and extensions, see the [JuMP](https://github.com/JuliaOpt/JuMP.jl) and [MathProgBase](https://github.com/JuliaOpt/MathProgBase.jl) packages.
@@ -307,11 +370,59 @@ In addition to the `iterations`, `store_trace`, `show_trace` and
 * `rel_tol`: The relative tolerance used for determining convergence. Defaults to `sqrt(eps(T))`.
 * `abs_tol`: The absolute tolerance used for determining convergence. Defaults to `eps(T)`.
 
-## State of the Library
+## Preconditioning
+
+The `GradientDescent`, `ConjugateGradient` and `LBFGS` methods support preconditioning. A preconditioner
+can be thought of as a change of coordinates under which the Hessian is better conditioned. With a
+"good" preconditioner substantially improved convergence is possible.
+
+An example of this is
+```jl
+using ForwardDiff
+plap(U; n=length(U)) = (n-1) * sum( (0.1 + diff(U).^2).^2 ) - sum(U) / (n-1)
+plap1 = ForwardDiff.gradient(plap)
+precond(n) = spdiagm( ( -ones(n-1), 2*ones(n), -ones(n-1) ), (-1,0,1), n, n) * (n+1)
+df = DifferentiableFunction( X->plap([0;X;0]),
+                             (X, G)->copy!(G, (plap1([0;X;0]))[2:end-1]) )
+result = Optim.optimize(df, zeros(100), method=ConjugateGradient(P = nothing) )
+result = Optim.optimize(df, zeros(100), method=ConjugateGradient(P = precond(100)) )
+```
+
+Benchmarking shows that using preconditioning provides an approximate speedup factor of 15 in this case.
+
+A preconditioner can be of any type as long as the following two methods are
+implemented:
+
+* `A_ldiv_B!(pgr, P, gr)` : apply `P` to a vector `gr` and store in `pgr`
+      (intuitively, `pgr = P \ gr`)
+* `dot(x, P, y)` : the inner product induced by `P`
+      (intuitively, `dot(x, P * y)`)
+
+Precisely what these operations mean, depends on how `P` is stored. Commonly, we store a matrix `P` which
+approximates the Hessian in some vague sense. In this case,
+
+* `A_ldiv_B!(pgr, P, gr) = copy!(pgr, P \ A)`
+* `dot(x, P, y) = dot(x, P * y)`
+
+Finally, it is possible to update the preconditioner as the state variable `x`
+changes. This is done through  `precondprep!` which is passed to the
+optimisers as kw-argument, e.g.,
+```jl
+   method=ConjugateGradient(P = precond(100), precondprep! = precond(100))
+```
+though in this case it would always return the same matrix.
+(See `fminbox.jl` for a more natural example.)
+
+Apart from preconditioning with matrices, `Optim.jl` provides
+a type `InverseDiagonal`, which represents a diagonal matrix by
+its inverse elements.
+
+
+# State of the Library
 
 The current API calls for the user to use the `optimize` function with the appropriate `method` as shown above. Below is the old (deprecated) syntax.
 
-### Existing Functions (deprecated)
+## Existing Functions (deprecated)
 * Gradient Descent: `gradient_descent()`
 * Newton's Method: `newton()`
 * BFGS: `bfgs()`
@@ -326,11 +437,11 @@ The current API calls for the user to use the `optimize` function with the appro
 * Brent's method: `brent()`
 * Golden Section search: `golden_section()`
 
-### Planned Functions
+## Planned Functions
 * Linear conjugate gradients
 * L-BFGS-B (note that this functionality is already available in fminbox)
 
-### Citations
+# Citations
 
 W. W. Hager and H. Zhang (2006) Algorithm 851: CG_DESCENT, a conjugate gradient method with guaranteed descent. ACM Transactions on Mathematical Software 32: 113-137.
 

@@ -13,7 +13,8 @@ function twoloop!(s::Vector,
                   m::Integer,
                   pseudo_iteration::Integer,
                   alpha::Vector,
-                  q::Vector)
+                  q::Vector,
+                  precon)
     # Count number of parameters
     n = length(s)
 
@@ -37,7 +38,9 @@ function twoloop!(s::Vector,
     end
 
     # Copy q into s for forward pass
-    copy!(s, q)
+    # apply preconditioner if precon != nothing
+    # (Note: preconditioner update was done outside of this function)
+    A_ldiv_B!(s, precon, q)
 
     # Forward pass
     for index in lower:1:upper
@@ -66,7 +69,7 @@ macro lbfgstrace()
                 dt["g(x)"] = copy(gr)
                 dt["Current step size"] = alpha
             end
-            grnorm = norm(gr, Inf)
+            grnorm = vecnorm(gr, Inf)
             update!(tr,
                     iteration,
                     f_x,
@@ -80,13 +83,16 @@ macro lbfgstrace()
     end
 end
 
-immutable LBFGS <: Optimizer
+immutable LBFGS{T} <: Optimizer
     m::Int
     linesearch!::Function
+    P::T
+    precondprep!::Function
 end
 
-LBFGS(; m::Integer = 10, linesearch!::Function = hz_linesearch!) =
-  LBFGS(Int(m), linesearch!)
+LBFGS(; m::Integer = 10, linesearch!::Function = hz_linesearch!,
+      P=nothing, precondprep! = (P, x) -> nothing) =
+    LBFGS(Int(m), linesearch!, P, precondprep!)
 
 function optimize{T}(d::DifferentiableFunction,
                      initial_x::Vector{T},
@@ -119,7 +125,7 @@ function optimize{T}(d::DifferentiableFunction,
     s = Array(T, n)
 
     # Buffers for use in line search
-    x_ls, gr_ls = Array(T, n), Array(T, n)
+    x_ls, g_ls = Array(T, n), Array(T, n)
 
     # Store f(x) in f_x
     f_x_previous, f_x = NaN, d.fg!(x, gr)
@@ -142,12 +148,12 @@ function optimize{T}(d::DifferentiableFunction,
     twoloop_q, twoloop_alpha = Array(T, n), Array(T, mo.m)
 
     # Trace the history of states visited
-    tr = OptimizationTrace()
+    tr = OptimizationTrace(mo)
     tracing = o.store_trace || o.show_trace || o.extended_trace || o.callback != nothing
     @lbfgstrace
 
     # Assess multiple types of convergence
-    x_converged, f_converged, gr_converged = false, false, false
+    x_converged, f_converged, g_converged = false, false, false
 
     # Iterate until convergence
     converged = false
@@ -156,9 +162,12 @@ function optimize{T}(d::DifferentiableFunction,
         iteration += 1
         pseudo_iteration += 1
 
+        # update the preconditioner
+        mo.precondprep!(mo.P, x)
+
         # Determine the L-BFGS search direction
         twoloop!(s, gr, rho, dx_history, dgr_history, mo.m, pseudo_iteration,
-                 twoloop_alpha, twoloop_q)
+                 twoloop_alpha, twoloop_q, mo.P)
 
         # Refresh the line search cache
         dphi0 = vecdot(gr, s)
@@ -175,7 +184,7 @@ function optimize{T}(d::DifferentiableFunction,
 
         # Determine the distance of movement along the search line
         alpha, f_update, g_update =
-          mo.linesearch!(d, x, s, x_ls, gr_ls, lsr, alpha, mayterminate)
+          mo.linesearch!(d, x, s, x_ls, g_ls, lsr, alpha, mayterminate)
         f_calls, g_calls = f_calls + f_update, g_calls + g_update
 
         # Maintain a record of previous position
@@ -212,15 +221,15 @@ function optimize{T}(d::DifferentiableFunction,
 
         x_converged,
         f_converged,
-        gr_converged,
+        g_converged,
         converged = assess_convergence(x,
                                        x_previous,
                                        f_x,
                                        f_x_previous,
                                        gr,
-                                       o.xtol,
-                                       o.ftol,
-                                       o.grtol)
+                                       o.x_tol,
+                                       o.f_tol,
+                                       o.g_tol)
 
         @lbfgstrace
     end
@@ -232,11 +241,11 @@ function optimize{T}(d::DifferentiableFunction,
                                            iteration,
                                            iteration == o.iterations,
                                            x_converged,
-                                           o.xtol,
+                                           o.x_tol,
                                            f_converged,
-                                           o.ftol,
-                                           gr_converged,
-                                           o.grtol,
+                                           o.f_tol,
+                                           g_converged,
+                                           o.g_tol,
                                            tr,
                                            f_calls,
                                            g_calls)

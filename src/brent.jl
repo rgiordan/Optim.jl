@@ -8,7 +8,7 @@ macro brenttrace()
                 dt["x_upper"] = x_upper
             end
             update!(tr,
-                    it,
+                    iteration,
                     f_minimum,
                     NaN,
                     dt,
@@ -24,7 +24,7 @@ immutable Brent <: Optimizer end
 
 function optimize{T <: AbstractFloat}(
         f::Function, x_lower::T, x_upper::T,
-        ::Brent;
+        mo::Brent;
         rel_tol::T = sqrt(eps(T)),
         abs_tol::T = eps(T),
         iterations::Integer = 1_000,
@@ -57,15 +57,15 @@ function optimize{T <: AbstractFloat}(
     f_minimum_old = f_minimum
     f_minimum_old_old = f_minimum
 
-    it = 0
+    iteration = 0
     converged = false
 
     # Trace the history of states visited
-    tr = OptimizationTrace()
+    tr = OptimizationTrace(mo)
     tracing = store_trace || show_trace || extended_trace || callback != nothing
     @brenttrace
 
-    while it < iterations
+    while iteration < iterations
 
         p = zero(T)
         q = zero(T)
@@ -79,7 +79,7 @@ function optimize{T <: AbstractFloat}(
             break
         end
 
-        it += 1
+        iteration += 1
 
         if abs(step_old) > tolx
             # Compute parabola interpolation
@@ -140,12 +140,12 @@ function optimize{T <: AbstractFloat}(
             else
                 x_upper = x_new
             end
-            if x_new <= x_minimum_old || x_minimum_old == x_minimum
+            if f_new <= f_minimum_old || x_minimum_old == x_minimum
                 x_minimum_old_old = x_minimum_old
                 f_minimum_old_old = f_minimum_old
                 x_minimum_old = x_new
                 f_minimum_old = f_new
-            elseif x_new <= x_minimum_old_old || x_minimum_old_old == x_minimum || x_minimum_old_old == x_minimum_old
+            elseif f_new <= f_minimum_old_old || x_minimum_old_old == x_minimum || x_minimum_old_old == x_minimum_old
                 x_minimum_old_old = x_new
                 f_minimum_old_old = f_new
             end
@@ -159,7 +159,8 @@ function optimize{T <: AbstractFloat}(
                                          initial_upper,
                                          x_minimum,
                                          Float64(f_minimum),
-                                         it,
+                                         iteration,
+                                         iteration == iterations,
                                          converged,
                                          rel_tol,
                                          abs_tol,

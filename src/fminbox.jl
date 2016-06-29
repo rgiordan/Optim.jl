@@ -18,7 +18,7 @@ end
 
 function barrier_box{T}(x::Array{T}, g, l::Array{T}, u::Array{T})
     n = length(x)
-    calc_grad = !(g === nothing)
+    calc_g = !(g === nothing)
 
     v = zero(T)
     for i = 1:n
@@ -29,11 +29,11 @@ function barrier_box{T}(x::Array{T}, g, l::Array{T}, u::Array{T})
                 return convert(T, Inf)
             end
             v -= log(dx)
-            if calc_grad
+            if calc_g
                 g[i] = -one(T)/dx
             end
         else
-            if calc_grad
+            if calc_g
                 g[i] = zero(T)
             end
         end
@@ -44,7 +44,7 @@ function barrier_box{T}(x::Array{T}, g, l::Array{T}, u::Array{T})
                 return convert(T, Inf)
             end
             v -= log(dx)
-            if calc_grad
+            if calc_g
                 g[i] += one(T)/dx
             end
         end
@@ -63,11 +63,11 @@ function function_barrier{T}(x::Array{T}, gfunc, gbarrier, f::Function, fbarrier
 end
 
 function barrier_combined{T}(x::Array{T}, g, gfunc, gbarrier, val_each::Vector{T}, fb::Function, mu::T)
-    calc_grad = !(g === nothing)
+    calc_g = !(g === nothing)
     valfunc, valbarrier = fb(x, gfunc, gbarrier)
     val_each[1] = valfunc
     val_each[2] = valbarrier
-    if calc_grad
+    if calc_g
         @simd for i = 1:length(g)
             @inbounds g[i] = gfunc[i] + mu*gbarrier[i]
         end
@@ -93,12 +93,12 @@ end
 
 # Default preconditioner for box-constrained optimization
 # This creates the inverse Hessian of the barrier penalty
-function precondprepbox(P, x, l, u, mu)
+function precondprepbox!(P, x, l, u, mu)
     @inbounds @simd for i = 1:length(x)
         xi = x[i]
         li = l[i]
         ui = u[i]
-        P[i] = 1/(mu*(1/(xi-li)^2 + 1/(ui-xi)^2) + 1) # +1 like identity far from edges
+        P.diag[i] = 1/(mu*(1/(xi-li)^2 + 1/(ui-xi)^2) + 1) # +1 like identity far from edges
     end
 end
 
@@ -113,9 +113,9 @@ function optimize{T<:AbstractFloat}(
         l::Array{T},
         u::Array{T},
         ::Fminbox;
-        xtol::T = eps(T),
-        ftol::T = sqrt(eps(T)),
-        grtol::T = sqrt(eps(T)),
+        x_tol::T = eps(T),
+        f_tol::T = sqrt(eps(T)),
+        g_tol::T = sqrt(eps(T)),
         iterations::Integer = 1_000,
         store_trace::Bool = false,
         show_trace::Bool = false,
@@ -126,16 +126,20 @@ function optimize{T<:AbstractFloat}(
         eta::Real = convert(T,0.4),
         mu0::T = convert(T, NaN),
         mufactor::T = convert(T, 0.001),
-        precondprep = (P, x, l, u, mu) -> precondprepbox(P, x, l, u, mu),
+        precondprep! = (P, x, l, u, mu) -> precondprepbox!(P, x, l, u, mu),
         optimizer = ConjugateGradient,
+        optimizer_o = OptimizationOptions(store_trace = store_trace,
+                                          show_trace = show_trace,
+                                          extended_trace = extended_trace),
         nargs...)
 
+    optimizer == Newton && warning("Newton is not supported as the inner optimizer. Defaulting to ConjugateGradient.")
     x = copy(initial_x)
     fbarrier = (x, gbarrier) -> barrier_box(x, gbarrier, l, u)
     fb = (x, gfunc, gbarrier) -> function_barrier(x, gfunc, gbarrier, df.fg!, fbarrier)
     gfunc = similar(x)
     gbarrier = similar(x)
-    P = Array(T, length(initial_x))
+    P = InverseDiagonal(Array(T, length(initial_x)))
     # to be careful about one special case that might occur commonly
     # in practice: the initial guess x is exactly in the center of the
     # box. In that case, gbarrier is zero. But since the
@@ -161,12 +165,18 @@ function optimize{T<:AbstractFloat}(
     g = similar(x)
     valboth = Array(T, 2)
     fval_all = Array(Vector{T}, 0)
-    fcount_all = 0
+
+    # Count the total number of outer iterations
+    iteration = 0
+
     xold = similar(x)
     converged = false
     local results
     first = true
-    while true
+    while !converged && iteration < iterations
+        # Increment the number of steps we've had to perform
+        iteration += 1
+
         copy!(xold, x)
         # Optimize with current setting of mu
         funcc = (x, g) -> barrier_combined(x, g, gfunc, gbarrier, valboth, fb, mu)
@@ -175,12 +185,22 @@ function optimize{T<:AbstractFloat}(
         if show_trace > 0
             println("#### Calling optimizer with mu = ", mu, " ####")
         end
-        pcp = (P, x) -> precondprep(P, x, l, u, mu)
-        resultsnew = optimize(dfbox, x, optimizer(eta = eta, linesearch! = linesearch!, P = P, precondprep = pcp),
-                              OptimizationOptions(xtol=xtol, ftol=ftol, grtol=grtol, iterations=iterations,
-                                                  store_trace=store_trace, show_trace=show_trace, extended_trace=extended_trace))
-        if first == true
+        pcp = (P, x) -> precondprep!(P, x, l, u, mu)
+        if optimizer == ConjugateGradient
+            _optimizer = optimizer(eta = eta, linesearch! = linesearch!, P = P, precondprep! = pcp)
+        elseif optimizer in (LBFGS, GradientDescent)
+            _optimizer = optimizer(linesearch! = linesearch!, P = P, precondprep! = pcp)
+        elseif optimizer in (NelderMead, SimulatedAnnealing)
+            _optimizer = optimizer()
+        elseif optimizer == Newton
+            _optimizer = ConjugateGradient(eta = eta, linesearch! = linesearch!, P = P, precondprep! = pcp)
+        else
+            _optimizer = optimizer(linesearch! = linesearch!)
+        end
+        resultsnew = optimize(dfbox, x, _optimizer, optimizer_o)
+        if first
             results = resultsnew
+            first = false
         else
             append!(results, resultsnew)
         end
@@ -196,12 +216,13 @@ function optimize{T<:AbstractFloat}(
         @simd for i = 1:length(x)
             @inbounds g[i] = gfunc[i] + mu*gbarrier[i]
         end
-        x_converged, f_converged, gr_converged, converged = assess_convergence(x, xold, results.f_minimum, fval0, g, xtol, ftol, grtol)
-        if converged
-            break
-        end
+
+        x_converged, f_converged, g_converged, converged = assess_convergence(x, xold, results.f_minimum, fval0, g, x_tol, f_tol, g_tol)
+
     end
+    results.method = "Fminbox with $(results.method)"
+    results.iterations = iteration
     results.initial_x = initial_x
+    results.f_minimum = df.f(results.minimum)
     results
 end
-export fminbox
