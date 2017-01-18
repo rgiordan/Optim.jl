@@ -112,6 +112,12 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
         # Solutions smaller than this lower bound on lambda are not allowed:
         # they don't ridge H enough to make H_ridge PSD.
         lambda_lb = -min_H_ev + max(1e-8, 1e-8 * (max_H_ev - min_H_ev))
+        # lambda_lb_check = max(-min_H_ev, -abs(max_H_ev)) + max(1e-8, 1e-8 * (max_H_ev - min_H_ev))
+        # println("  lamdba_lb: ", lambda_lb, "  lamdba_lb_check: ", lambda_lb_check,
+        #         "  new: ", lambda_lb + 0.01 * (max_H_ev - min_H_ev),
+        #         "  old: ", lambda_lb + 0.01 * (max_H_ev - lambda_lb),
+        #         "  min_H_ev: ", min_H_ev,
+        #         "  max_H_ev: ", max_H_ev)
         lambda = lambda_lb
 
         hard_case = false
@@ -125,7 +131,8 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
             if p_lambda2 > delta_sq
                 # Then we can simply solve using root finding.
                 # Set a starting point between the minimum and largest eigenvalues.
-                lambda = lambda_lb + 0.01 * (max_H_ev - lambda_lb)
+                lambda = lambda_lb + 0.01 * (max_H_ev - min_H_ev)
+                # lambda = lambda_lb + 0.01 * (max_H_ev - lambda_lb)
             else
                 hard_case = true
                 reached_solution = true
@@ -158,6 +165,7 @@ function solve_tr_subproblem!{T}(gr::Vector{T},
 
                 # Version 0.5 requires an exactly symmetric matrix, but
                 # version 0.4 does not have this function signature for chol().
+                # println(eigvals(H_ridged))
                 R = VERSION < v"0.5-" ? chol(H_ridged): chol(Hermitian(H_ridged))
                 s[:] = -R \ (R' \ gr)
                 q_l = R' \ s
