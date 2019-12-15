@@ -65,7 +65,7 @@ end
 #  reached_solution - Whether or not a solution was reached (as opposed to
 #      terminating early due to max_iters)
 function solve_tr_subproblem!{T}(gr::Vector{T},
-                                 H::Matrix{T},
+                                 H::Union{Matrix{T}, SymTridiagonal{T}},
                                  delta::T,
                                  s::Vector{T};
                                  tolerance::T=1e-10,
